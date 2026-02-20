@@ -105,7 +105,7 @@ func (r *Router) handleAmbiguous(channelID, userID, text, responseURL string) {
 		handler.Execute(channelID, userID, text, responseURL)
 	default:
 		log.Printf("[user=%s channel=%s] routed to: general handler", userID, channelID)
-		handler := &GeneralHandler{modelsClient: r.modelsClient}
+		handler := &GeneralHandler{ghClient: r.ghClient, modelsClient: r.modelsClient}
 		handler.Execute(channelID, userID, text, responseURL)
 	}
 }

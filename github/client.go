@@ -116,3 +116,45 @@ func (c *Client) CreatePullRequest(ctx context.Context, owner, repo, baseBranch,
 func GenerateBranchName(prefix string) string {
 	return fmt.Sprintf("ovad/%s-%d", prefix, time.Now().Unix())
 }
+
+func (c *Client) ListOrgRepos(ctx context.Context, org string) ([]string, error) {
+	var allRepos []string
+	opts := &gh.RepositoryListByOrgOptions{
+		ListOptions: gh.ListOptions{PerPage: 100},
+	}
+	for {
+		repos, resp, err := c.api.Repositories.ListByOrg(ctx, org, opts)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list repositories for org %s: %w", org, err)
+		}
+		for _, r := range repos {
+			allRepos = append(allRepos, r.GetFullName())
+		}
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+	return allRepos, nil
+}
+
+func (c *Client) ListUserRepos(ctx context.Context) ([]string, error) {
+	var allRepos []string
+	opts := &gh.RepositoryListByAuthenticatedUserOptions{
+		ListOptions: gh.ListOptions{PerPage: 100},
+	}
+	for {
+		repos, resp, err := c.api.Repositories.ListByAuthenticatedUser(ctx, opts)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list repositories: %w", err)
+		}
+		for _, r := range repos {
+			allRepos = append(allRepos, r.GetFullName())
+		}
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+	return allRepos, nil
+}
