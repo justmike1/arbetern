@@ -88,7 +88,7 @@ func (r *Router) handleAmbiguous(channelID, userID, text, responseURL string) {
 
 	result, err := r.modelsClient.Complete(ctx, systemPrompt, text)
 	if err != nil {
-		log.Printf("failed to classify intent via LLM: %v", err)
+		log.Printf("[user=%s channel=%s] failed to classify intent via LLM: %v", userID, channelID, err)
 		r.replyError(responseURL, "I couldn't understand your request. Try: `/ovad debug the latest message` or `/ovad add env var KEY=VALUE in file.tf in my-repo repository`")
 		return
 	}

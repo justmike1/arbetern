@@ -28,7 +28,7 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	log.Printf("ovad server starting on :%s", cfg.Port)
+	log.Printf("ovad server starting on :%s using model %s", cfg.Port, cfg.GitHubModel)
 	if err := http.ListenAndServe(":"+cfg.Port, nil); err != nil {
 		log.Fatalf("server failed: %v", err)
 	}
