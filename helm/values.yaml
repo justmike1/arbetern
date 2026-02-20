@@ -2,7 +2,7 @@ replicaCount: 1
 
 image:
   repository: ghcr.io/justmike1/ovad
-  pullPolicy: IfNotPresent
+  pullPolicy: Always
   tag: ""
 
 imagePullSecrets: []
