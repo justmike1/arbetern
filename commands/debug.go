@@ -16,6 +16,7 @@ type DebugHandler struct {
 	slackClient     SlackClient
 	modelsClient    *github.ModelsClient
 	contextProvider *ContextProvider
+	memory          *ConversationMemory
 }
 
 func (h *DebugHandler) Execute(channelID, userID, text, responseURL string) {
@@ -45,6 +46,7 @@ func (h *DebugHandler) Execute(channelID, userID, text, responseURL string) {
 	}
 
 	log.Printf("[user=%s channel=%s] debug analysis completed successfully", userID, channelID)
+	h.memory.SetAssistantResponse(channelID, userID, response)
 	if err := ovadslack.RespondToURL(responseURL, response, false); err != nil {
 		log.Printf("[user=%s channel=%s] failed to post debug response: %v", userID, channelID, err)
 	}

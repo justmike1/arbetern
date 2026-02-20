@@ -17,6 +17,7 @@ type FileModHandler struct {
 	ghClient        *github.Client
 	modelsClient    *github.ModelsClient
 	contextProvider *ContextProvider
+	memory          *ConversationMemory
 }
 
 type fileModParams struct {
@@ -97,6 +98,7 @@ func (h *FileModHandler) Execute(channelID, userID, text, responseURL string) {
 
 	log.Printf("[user=%s channel=%s] PR created: %s", userID, channelID, prURL)
 	msg := fmt.Sprintf("Pull request created: %s", prURL)
+	h.memory.SetAssistantResponse(channelID, userID, msg)
 	if err := ovadslack.RespondToURL(responseURL, msg, false); err != nil {
 		log.Printf("[user=%s channel=%s] failed to post PR link: %v", userID, channelID, err)
 	}

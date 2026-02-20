@@ -18,6 +18,7 @@ type GeneralHandler struct {
 	ghClient        *github.Client
 	modelsClient    *github.ModelsClient
 	contextProvider *ContextProvider
+	memory          *ConversationMemory
 }
 
 func (h *GeneralHandler) Execute(channelID, userID, text, responseURL string) {
@@ -31,6 +32,10 @@ func (h *GeneralHandler) Execute(channelID, userID, text, responseURL string) {
 	}
 
 	systemMsg := h.systemPrompt()
+	history := h.memory.GetHistory(channelID, userID)
+	if history != "" {
+		systemMsg += fmt.Sprintf("\n\nPrevious conversation with this user:\n%s", history)
+	}
 	if channelContext != "" && channelContext != "(no recent messages)" {
 		systemMsg += fmt.Sprintf("\n\nRecent channel messages for context:\n%s", channelContext)
 	}
@@ -58,6 +63,7 @@ func (h *GeneralHandler) Execute(channelID, userID, text, responseURL string) {
 
 		if len(choice.Message.ToolCalls) == 0 {
 			log.Printf("[user=%s channel=%s] general query completed successfully", userID, channelID)
+			h.memory.SetAssistantResponse(channelID, userID, choice.Message.Content)
 			if err := ovadslack.RespondToURL(responseURL, choice.Message.Content, false); err != nil {
 				log.Printf("[user=%s channel=%s] failed to post general response: %v", userID, channelID, err)
 			}

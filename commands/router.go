@@ -16,6 +16,7 @@ type Router struct {
 	ghClient        *github.Client
 	modelsClient    *github.ModelsClient
 	contextProvider *ContextProvider
+	memory          *ConversationMemory
 }
 
 func NewRouter(slackClient SlackClient, ghClient *github.Client, modelsClient *github.ModelsClient) *Router {
@@ -24,6 +25,7 @@ func NewRouter(slackClient SlackClient, ghClient *github.Client, modelsClient *g
 		ghClient:        ghClient,
 		modelsClient:    modelsClient,
 		contextProvider: NewContextProvider(slackClient),
+		memory:          NewConversationMemory(),
 	}
 }
 
@@ -39,6 +41,8 @@ func (r *Router) Handle(channelID, userID, text, responseURL string) {
 
 	_ = ovadslack.RespondToURL(responseURL, fmt.Sprintf("Processing request: _%s_", text), true)
 
+	r.memory.AddUserMessage(channelID, userID, text)
+
 	lower := strings.ToLower(text)
 
 	switch {
@@ -48,6 +52,7 @@ func (r *Router) Handle(channelID, userID, text, responseURL string) {
 			slackClient:     r.slackClient,
 			modelsClient:    r.modelsClient,
 			contextProvider: r.contextProvider,
+			memory:          r.memory,
 		}
 		handler.Execute(channelID, userID, text, responseURL)
 
@@ -58,6 +63,7 @@ func (r *Router) Handle(channelID, userID, text, responseURL string) {
 			ghClient:        r.ghClient,
 			modelsClient:    r.modelsClient,
 			contextProvider: r.contextProvider,
+			memory:          r.memory,
 		}
 		handler.Execute(channelID, userID, text, responseURL)
 
@@ -91,8 +97,14 @@ func (r *Router) handleAmbiguous(channelID, userID, text, responseURL string) {
 	ctx := contextBackground()
 
 	systemPrompt := prompts.MustGet("classifier")
+	history := r.memory.GetHistory(channelID, userID)
 
-	result, err := r.modelsClient.Complete(ctx, systemPrompt, text)
+	classifyInput := text
+	if history != "" {
+		classifyInput = fmt.Sprintf("Previous conversation:\n%s\n\nCurrent message: %s", history, text)
+	}
+
+	result, err := r.modelsClient.Complete(ctx, systemPrompt, classifyInput)
 	if err != nil {
 		log.Printf("[user=%s channel=%s] failed to classify intent via LLM: %v", userID, channelID, err)
 		r.replyError(responseURL, "I couldn't understand your request. Try: `/ovad debug the latest message` or `/ovad add env var KEY=VALUE in file.tf in my-repo repository`")
@@ -104,14 +116,14 @@ func (r *Router) handleAmbiguous(channelID, userID, text, responseURL string) {
 
 	switch {
 	case strings.Contains(classification, "debug"):
-		handler := &DebugHandler{slackClient: r.slackClient, modelsClient: r.modelsClient, contextProvider: r.contextProvider}
+		handler := &DebugHandler{slackClient: r.slackClient, modelsClient: r.modelsClient, contextProvider: r.contextProvider, memory: r.memory}
 		handler.Execute(channelID, userID, text, responseURL)
 	case strings.Contains(classification, "filemod"):
-		handler := &FileModHandler{slackClient: r.slackClient, ghClient: r.ghClient, modelsClient: r.modelsClient, contextProvider: r.contextProvider}
+		handler := &FileModHandler{slackClient: r.slackClient, ghClient: r.ghClient, modelsClient: r.modelsClient, contextProvider: r.contextProvider, memory: r.memory}
 		handler.Execute(channelID, userID, text, responseURL)
 	default:
 		log.Printf("[user=%s channel=%s] routed to: general handler", userID, channelID)
-		handler := &GeneralHandler{ghClient: r.ghClient, modelsClient: r.modelsClient, contextProvider: r.contextProvider}
+		handler := &GeneralHandler{ghClient: r.ghClient, modelsClient: r.modelsClient, contextProvider: r.contextProvider, memory: r.memory}
 		handler.Execute(channelID, userID, text, responseURL)
 	}
 }
