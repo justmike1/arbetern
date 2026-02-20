@@ -2,24 +2,28 @@ package commands
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"strings"
 
 	"github.com/justmike1/ovad/github"
+	"github.com/justmike1/ovad/prompts"
 	ovadslack "github.com/justmike1/ovad/slack"
 )
 
 type Router struct {
-	slackClient  SlackClient
-	ghClient     *github.Client
-	modelsClient *github.ModelsClient
+	slackClient     SlackClient
+	ghClient        *github.Client
+	modelsClient    *github.ModelsClient
+	contextProvider *ContextProvider
 }
 
 func NewRouter(slackClient SlackClient, ghClient *github.Client, modelsClient *github.ModelsClient) *Router {
 	return &Router{
-		slackClient:  slackClient,
-		ghClient:     ghClient,
-		modelsClient: modelsClient,
+		slackClient:     slackClient,
+		ghClient:        ghClient,
+		modelsClient:    modelsClient,
+		contextProvider: NewContextProvider(slackClient),
 	}
 }
 
@@ -32,23 +36,28 @@ func (r *Router) Handle(channelID, userID, text, responseURL string) {
 	}
 
 	log.Printf("[user=%s channel=%s] received command: %s", userID, channelID, text)
+
+	_ = ovadslack.RespondToURL(responseURL, fmt.Sprintf("Processing request: _%s_", text), true)
+
 	lower := strings.ToLower(text)
 
 	switch {
 	case isDebugIntent(lower):
 		log.Printf("[user=%s channel=%s] routed to: debug", userID, channelID)
 		handler := &DebugHandler{
-			slackClient:  r.slackClient,
-			modelsClient: r.modelsClient,
+			slackClient:     r.slackClient,
+			modelsClient:    r.modelsClient,
+			contextProvider: r.contextProvider,
 		}
 		handler.Execute(channelID, userID, text, responseURL)
 
 	case isFileModIntent(lower):
 		log.Printf("[user=%s channel=%s] routed to: filemod", userID, channelID)
 		handler := &FileModHandler{
-			slackClient:  r.slackClient,
-			ghClient:     r.ghClient,
-			modelsClient: r.modelsClient,
+			slackClient:     r.slackClient,
+			ghClient:        r.ghClient,
+			modelsClient:    r.modelsClient,
+			contextProvider: r.contextProvider,
 		}
 		handler.Execute(channelID, userID, text, responseURL)
 
@@ -81,10 +90,7 @@ func isFileModIntent(text string) bool {
 func (r *Router) handleAmbiguous(channelID, userID, text, responseURL string) {
 	ctx := contextBackground()
 
-	systemPrompt := `You are a command classifier. Given a user message, respond with exactly one word:
-- "debug" if the user wants to analyze, debug, or investigate messages/alerts
-- "filemod" if the user wants to modify, add, change, or update a file in a repository
-- "general" for any other request (questions, listing things, general help)`
+	systemPrompt := prompts.MustGet("classifier")
 
 	result, err := r.modelsClient.Complete(ctx, systemPrompt, text)
 	if err != nil {
@@ -98,14 +104,14 @@ func (r *Router) handleAmbiguous(channelID, userID, text, responseURL string) {
 
 	switch {
 	case strings.Contains(classification, "debug"):
-		handler := &DebugHandler{slackClient: r.slackClient, modelsClient: r.modelsClient}
+		handler := &DebugHandler{slackClient: r.slackClient, modelsClient: r.modelsClient, contextProvider: r.contextProvider}
 		handler.Execute(channelID, userID, text, responseURL)
 	case strings.Contains(classification, "filemod"):
-		handler := &FileModHandler{slackClient: r.slackClient, ghClient: r.ghClient, modelsClient: r.modelsClient}
+		handler := &FileModHandler{slackClient: r.slackClient, ghClient: r.ghClient, modelsClient: r.modelsClient, contextProvider: r.contextProvider}
 		handler.Execute(channelID, userID, text, responseURL)
 	default:
 		log.Printf("[user=%s channel=%s] routed to: general handler", userID, channelID)
-		handler := &GeneralHandler{ghClient: r.ghClient, modelsClient: r.modelsClient}
+		handler := &GeneralHandler{ghClient: r.ghClient, modelsClient: r.modelsClient, contextProvider: r.contextProvider}
 		handler.Execute(channelID, userID, text, responseURL)
 	}
 }

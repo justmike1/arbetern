@@ -7,6 +7,7 @@ import (
 	"github.com/justmike1/ovad/commands"
 	"github.com/justmike1/ovad/config"
 	"github.com/justmike1/ovad/github"
+	"github.com/justmike1/ovad/prompts"
 	ovadslack "github.com/justmike1/ovad/slack"
 )
 
@@ -14,6 +15,10 @@ func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("configuration error: %v", err)
+	}
+
+	if err := prompts.Load(""); err != nil {
+		log.Fatalf("failed to load prompts: %v", err)
 	}
 
 	slackClient := ovadslack.NewClient(cfg.SlackBotToken)

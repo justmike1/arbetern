@@ -8,13 +8,15 @@ import (
 	"strings"
 
 	"github.com/justmike1/ovad/github"
+	"github.com/justmike1/ovad/prompts"
 	ovadslack "github.com/justmike1/ovad/slack"
 )
 
 type FileModHandler struct {
-	slackClient  SlackClient
-	ghClient     *github.Client
-	modelsClient *github.ModelsClient
+	slackClient     SlackClient
+	ghClient        *github.Client
+	modelsClient    *github.ModelsClient
+	contextProvider *ContextProvider
 }
 
 type fileModParams struct {
@@ -57,8 +59,7 @@ func (h *FileModHandler) Execute(channelID, userID, text, responseURL string) {
 		return
 	}
 
-	systemPrompt := `You are an infrastructure-as-code expert. You will be given the current contents of a file and a modification request.
-Return ONLY the complete updated file content with the requested changes applied. Do not include any explanation, markdown formatting, or code fences. Output the raw file content only.`
+	systemPrompt := prompts.MustGet("filemod")
 
 	userPrompt := fmt.Sprintf("Current file (%s):\n\n%s\n\nRequested change: %s", params.FilePath, currentContent, params.Description)
 
@@ -117,10 +118,7 @@ func (h *FileModHandler) parseParams(ctx context.Context, text string) (*fileMod
 }
 
 func (h *FileModHandler) parseParamsWithLLM(ctx context.Context, text string) (*fileModParams, error) {
-	systemPrompt := `Extract file modification parameters from the user request. Respond in exactly this format (one per line, no extra text):
-repository: <repo-name>
-filepath: <file-path>
-description: <what to change>`
+	systemPrompt := prompts.MustGet("filemod_parser")
 
 	result, err := h.modelsClient.Complete(ctx, systemPrompt, text)
 	if err != nil {

@@ -10,6 +10,9 @@ RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /ovad .
 
 FROM gcr.io/distroless/static:nonroot
 
-COPY --from=builder /ovad /usr/local/bin/ovad
+WORKDIR /app
 
-ENTRYPOINT ["ovad"]
+COPY --from=builder /ovad /app/ovad
+COPY prompts.yaml /app/prompts.yaml
+
+ENTRYPOINT ["/app/ovad"]

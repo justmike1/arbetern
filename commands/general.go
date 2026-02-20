@@ -8,22 +8,35 @@ import (
 	"strings"
 
 	"github.com/justmike1/ovad/github"
+	"github.com/justmike1/ovad/prompts"
 	ovadslack "github.com/justmike1/ovad/slack"
 )
 
 const maxToolRounds = 5
 
 type GeneralHandler struct {
-	ghClient     *github.Client
-	modelsClient *github.ModelsClient
+	ghClient        *github.Client
+	modelsClient    *github.ModelsClient
+	contextProvider *ContextProvider
 }
 
 func (h *GeneralHandler) Execute(channelID, userID, text, responseURL string) {
 	ctx := context.Background()
 
 	tools := h.buildTools()
+
+	channelContext := ""
+	if cc, err := h.contextProvider.GetChannelContext(channelID); err == nil {
+		channelContext = cc
+	}
+
+	systemMsg := h.systemPrompt()
+	if channelContext != "" && channelContext != "(no recent messages)" {
+		systemMsg += fmt.Sprintf("\n\nRecent channel messages for context:\n%s", channelContext)
+	}
+
 	messages := []github.ChatMessage{
-		github.NewChatMessage("system", h.systemPrompt()),
+		github.NewChatMessage("system", systemMsg),
 		github.NewChatMessage("user", text),
 	}
 
@@ -68,12 +81,7 @@ func (h *GeneralHandler) Execute(channelID, userID, text, responseURL string) {
 }
 
 func (h *GeneralHandler) systemPrompt() string {
-	return `You are ovad, a DevOps and engineering assistant running inside Slack.
-You have access to tools that interact with GitHub. Use them to answer the user's request with real data.
-When presenting results, use Slack-compatible markdown formatting. Keep answers concise.
-Available ovad slash commands for reference:
-- /ovad debug the latest messages - analyze recent channel messages
-- /ovad add env var KEY=VALUE in file.tf in my-repo repository - modify files via PR`
+	return prompts.MustGet("general")
 }
 
 func (h *GeneralHandler) buildTools() []github.Tool {
@@ -137,6 +145,14 @@ func (h *GeneralHandler) buildTools() []github.Tool {
 			Function: github.ToolFunction{
 				Name:        "resolve_owner",
 				Description: "Resolve the GitHub organization or user that owns repositories.",
+				Parameters:  json.RawMessage(`{"type":"object","properties":{}}`),
+			},
+		},
+		{
+			Type: "function",
+			Function: github.ToolFunction{
+				Name:        "fetch_channel_context",
+				Description: "Fetch recent messages from the current Slack channel for additional context about the ongoing conversation.",
 				Parameters:  json.RawMessage(`{"type":"object","properties":{}}`),
 			},
 		},
@@ -230,6 +246,14 @@ func (h *GeneralHandler) executeTool(ctx context.Context, channelID, userID, nam
 			return fmt.Sprintf("Error: %v", err)
 		}
 		return fmt.Sprintf("Resolved owner: %s", owner)
+
+	case "fetch_channel_context":
+		context, err := h.contextProvider.GetChannelContext(channelID)
+		if err != nil {
+			return fmt.Sprintf("Error fetching channel context: %v", err)
+		}
+		log.Printf("[user=%s channel=%s] fetched channel context via tool", userID, channelID)
+		return context
 
 	default:
 		return fmt.Sprintf("Unknown tool: %s", name)
