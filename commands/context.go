@@ -68,19 +68,69 @@ func formatMessages(messages []slacklib.Message) string {
 	total := len(messages)
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Messages listed from NEWEST (message 1) to OLDEST (message %d):\n\n", total)
-	for i, idx := 0, 1; i < total; i, idx = i+1, idx+1 {
+	idx := 1
+	for i := 0; i < total; i++ {
 		msg := messages[i]
+		text := extractMessageContent(msg)
+		if text == "" {
+			continue
+		}
 		ts := msg.Timestamp
 		if t, err := tsToTime(ts); err == nil {
 			ts = t.Format("15:04:05")
+		}
+		sender := msg.User
+		if sender == "" && msg.Username != "" {
+			sender = msg.Username
+		}
+		if sender == "" && msg.BotID != "" {
+			sender = "bot:" + msg.BotID
 		}
 		label := ""
 		if idx == 1 {
 			label = " [LATEST]"
 		}
-		fmt.Fprintf(&sb, "Message %d%s [%s @%s]: %s\n", idx, label, ts, msg.User, msg.Text)
+		fmt.Fprintf(&sb, "Message %d%s [%s @%s]: %s\n", idx, label, ts, sender, text)
+		idx++
+	}
+	if idx == 1 {
+		return "(no recent messages with content)"
 	}
 	return sb.String()
+}
+
+func extractMessageContent(msg slacklib.Message) string {
+	if msg.Text != "" {
+		return msg.Text
+	}
+
+	var parts []string
+	for _, att := range msg.Attachments {
+		var attParts []string
+		if att.Pretext != "" {
+			attParts = append(attParts, att.Pretext)
+		}
+		if att.Title != "" {
+			title := att.Title
+			if att.TitleLink != "" {
+				title += " (" + att.TitleLink + ")"
+			}
+			attParts = append(attParts, title)
+		}
+		if att.Text != "" {
+			attParts = append(attParts, att.Text)
+		}
+		for _, f := range att.Fields {
+			attParts = append(attParts, f.Title+": "+f.Value)
+		}
+		if len(attParts) == 0 && att.Fallback != "" {
+			attParts = append(attParts, att.Fallback)
+		}
+		if len(attParts) > 0 {
+			parts = append(parts, strings.Join(attParts, "\n"))
+		}
+	}
+	return strings.Join(parts, "\n---\n")
 }
 
 func tsToTime(ts string) (time.Time, error) {
