@@ -31,28 +31,28 @@ func (h *FileModHandler) Execute(channelID, userID, text, responseURL string) {
 
 	params, err := h.parseParams(ctx, text)
 	if err != nil {
-		log.Printf("failed to parse file modification params: %v", err)
+		log.Printf("[user=%s channel=%s] failed to parse file modification params: %v", userID, channelID, err)
 		_ = ovadslack.RespondToURL(responseURL, fmt.Sprintf("Could not understand the request: %v", err), true)
 		return
 	}
 
 	owner, err := h.ghClient.ResolveOwner(ctx)
 	if err != nil {
-		log.Printf("failed to resolve owner: %v", err)
+		log.Printf("[user=%s channel=%s] failed to resolve owner: %v", userID, channelID, err)
 		_ = ovadslack.RespondToURL(responseURL, fmt.Sprintf("Failed to determine repository owner: %v", err), true)
 		return
 	}
 
 	defaultBranch, err := h.ghClient.GetDefaultBranch(ctx, owner, params.Repository)
 	if err != nil {
-		log.Printf("failed to get default branch: %v", err)
+		log.Printf("[user=%s channel=%s] failed to get default branch for %s/%s: %v", userID, channelID, owner, params.Repository, err)
 		_ = ovadslack.RespondToURL(responseURL, fmt.Sprintf("Failed to access repository %s/%s: %v", owner, params.Repository, err), true)
 		return
 	}
 
 	currentContent, fileSHA, err := h.ghClient.GetFileContent(ctx, owner, params.Repository, params.FilePath, defaultBranch)
 	if err != nil {
-		log.Printf("failed to get file content: %v", err)
+		log.Printf("[user=%s channel=%s] failed to get file %s from %s/%s: %v", userID, channelID, params.FilePath, owner, params.Repository, err)
 		_ = ovadslack.RespondToURL(responseURL, fmt.Sprintf("Failed to read file %s: %v", params.FilePath, err), true)
 		return
 	}
@@ -64,7 +64,7 @@ Return ONLY the complete updated file content with the requested changes applied
 
 	newContent, err := h.modelsClient.Complete(ctx, systemPrompt, userPrompt)
 	if err != nil {
-		log.Printf("LLM completion failed: %v", err)
+		log.Printf("[user=%s channel=%s] LLM completion failed for filemod: %v", userID, channelID, err)
 		_ = ovadslack.RespondToURL(responseURL, fmt.Sprintf("Failed to generate file modification: %v", err), true)
 		return
 	}
@@ -72,14 +72,14 @@ Return ONLY the complete updated file content with the requested changes applied
 	branchName := github.GenerateBranchName("filemod")
 
 	if err := h.ghClient.CreateBranch(ctx, owner, params.Repository, defaultBranch, branchName); err != nil {
-		log.Printf("failed to create branch: %v", err)
+		log.Printf("[user=%s channel=%s] failed to create branch %s: %v", userID, channelID, branchName, err)
 		_ = ovadslack.RespondToURL(responseURL, fmt.Sprintf("Failed to create branch: %v", err), true)
 		return
 	}
 
 	commitMsg := fmt.Sprintf("ovad: %s", params.Description)
 	if err := h.ghClient.UpdateFile(ctx, owner, params.Repository, params.FilePath, branchName, commitMsg, []byte(newContent), fileSHA); err != nil {
-		log.Printf("failed to commit file: %v", err)
+		log.Printf("[user=%s channel=%s] failed to commit file %s to %s: %v", userID, channelID, params.FilePath, branchName, err)
 		_ = ovadslack.RespondToURL(responseURL, fmt.Sprintf("Failed to commit changes: %v", err), true)
 		return
 	}
@@ -89,14 +89,15 @@ Return ONLY the complete updated file content with the requested changes applied
 
 	prURL, err := h.ghClient.CreatePullRequest(ctx, owner, params.Repository, defaultBranch, branchName, prTitle, prBody)
 	if err != nil {
-		log.Printf("failed to create PR: %v", err)
+		log.Printf("[user=%s channel=%s] failed to create PR: %v", userID, channelID, err)
 		_ = ovadslack.RespondToURL(responseURL, fmt.Sprintf("Changes were committed to branch `%s` but PR creation failed: %v", branchName, err), true)
 		return
 	}
 
+	log.Printf("[user=%s channel=%s] PR created: %s", userID, channelID, prURL)
 	msg := fmt.Sprintf("Pull request created: %s", prURL)
 	if err := ovadslack.RespondToURL(responseURL, msg, false); err != nil {
-		log.Printf("failed to post PR link: %v", err)
+		log.Printf("[user=%s channel=%s] failed to post PR link: %v", userID, channelID, err)
 	}
 }
 

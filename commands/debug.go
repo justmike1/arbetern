@@ -22,7 +22,7 @@ func (h *DebugHandler) Execute(channelID, userID, text, responseURL string) {
 
 	messages, err := h.slackClient.FetchChannelHistory(channelID, channelHistoryLimit)
 	if err != nil {
-		log.Printf("failed to fetch channel history: %v", err)
+		log.Printf("[user=%s channel=%s] failed to fetch channel history: %v", userID, channelID, err)
 		_ = ovadslack.RespondToURL(responseURL, fmt.Sprintf("Failed to read channel history: %v", err), true)
 		return
 	}
@@ -50,12 +50,13 @@ Be concise and actionable.`
 
 	response, err := h.modelsClient.Complete(ctx, systemPrompt, userPrompt)
 	if err != nil {
-		log.Printf("LLM completion failed: %v", err)
+		log.Printf("[user=%s channel=%s] LLM completion failed: %v", userID, channelID, err)
 		_ = ovadslack.RespondToURL(responseURL, fmt.Sprintf("Failed to analyze messages: %v", err), true)
 		return
 	}
 
+	log.Printf("[user=%s channel=%s] debug analysis completed successfully", userID, channelID)
 	if err := ovadslack.RespondToURL(responseURL, response, false); err != nil {
-		log.Printf("failed to post debug response: %v", err)
+		log.Printf("[user=%s channel=%s] failed to post debug response: %v", userID, channelID, err)
 	}
 }

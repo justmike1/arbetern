@@ -26,14 +26,17 @@ func NewRouter(slackClient SlackClient, ghClient *github.Client, modelsClient *g
 func (r *Router) Handle(channelID, userID, text, responseURL string) {
 	text = strings.TrimSpace(text)
 	if text == "" {
+		log.Printf("[user=%s channel=%s] empty command received", userID, channelID)
 		r.replyError(responseURL, "Please provide a command. Example: `/ovad please debug the latest message in this channel`")
 		return
 	}
 
+	log.Printf("[user=%s channel=%s] received command: %s", userID, channelID, text)
 	lower := strings.ToLower(text)
 
 	switch {
 	case isDebugIntent(lower):
+		log.Printf("[user=%s channel=%s] routed to: debug", userID, channelID)
 		handler := &DebugHandler{
 			slackClient:  r.slackClient,
 			modelsClient: r.modelsClient,
@@ -41,6 +44,7 @@ func (r *Router) Handle(channelID, userID, text, responseURL string) {
 		handler.Execute(channelID, userID, text, responseURL)
 
 	case isFileModIntent(lower):
+		log.Printf("[user=%s channel=%s] routed to: filemod", userID, channelID)
 		handler := &FileModHandler{
 			slackClient:  r.slackClient,
 			ghClient:     r.ghClient,
@@ -49,6 +53,7 @@ func (r *Router) Handle(channelID, userID, text, responseURL string) {
 		handler.Execute(channelID, userID, text, responseURL)
 
 	default:
+		log.Printf("[user=%s channel=%s] routed to: LLM classification", userID, channelID)
 		r.handleAmbiguous(channelID, userID, text, responseURL)
 	}
 }
@@ -79,7 +84,7 @@ func (r *Router) handleAmbiguous(channelID, userID, text, responseURL string) {
 	systemPrompt := `You are a command classifier. Given a user message, respond with exactly one word:
 - "debug" if the user wants to analyze, debug, or investigate messages/alerts
 - "filemod" if the user wants to modify, add, change, or update a file in a repository
-- "unknown" if you cannot determine the intent`
+- "general" for any other request (questions, listing things, general help)`
 
 	result, err := r.modelsClient.Complete(ctx, systemPrompt, text)
 	if err != nil {
@@ -89,6 +94,7 @@ func (r *Router) handleAmbiguous(channelID, userID, text, responseURL string) {
 	}
 
 	classification := strings.TrimSpace(strings.ToLower(result))
+	log.Printf("[user=%s channel=%s] LLM classified intent as: %s", userID, channelID, classification)
 
 	switch {
 	case strings.Contains(classification, "debug"):
@@ -98,7 +104,9 @@ func (r *Router) handleAmbiguous(channelID, userID, text, responseURL string) {
 		handler := &FileModHandler{slackClient: r.slackClient, ghClient: r.ghClient, modelsClient: r.modelsClient}
 		handler.Execute(channelID, userID, text, responseURL)
 	default:
-		r.replyError(responseURL, "I couldn't determine what you want. Try: `/ovad debug the latest message` or `/ovad add env var KEY=VALUE in file.tf in my-repo repository`")
+		log.Printf("[user=%s channel=%s] routed to: general handler", userID, channelID)
+		handler := &GeneralHandler{modelsClient: r.modelsClient}
+		handler.Execute(channelID, userID, text, responseURL)
 	}
 }
 
