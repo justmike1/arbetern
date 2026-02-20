@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
@@ -10,6 +11,8 @@ import (
 	ovadslack "github.com/justmike1/ovad/slack"
 )
 
+const maxToolRounds = 5
+
 type GeneralHandler struct {
 	ghClient     *github.Client
 	modelsClient *github.ModelsClient
@@ -17,75 +20,218 @@ type GeneralHandler struct {
 
 func (h *GeneralHandler) Execute(channelID, userID, text, responseURL string) {
 	ctx := context.Background()
-	lower := strings.ToLower(text)
 
-	if isListReposIntent(lower) {
-		h.handleListRepos(ctx, channelID, userID, text, responseURL)
-		return
+	tools := h.buildTools()
+	messages := []github.ChatMessage{
+		github.NewChatMessage("system", h.systemPrompt()),
+		github.NewChatMessage("user", text),
 	}
 
-	h.handleGenericQuestion(ctx, channelID, userID, text, responseURL)
-}
-
-func isListReposIntent(text string) bool {
-	return (strings.Contains(text, "list") || strings.Contains(text, "show") || strings.Contains(text, "all")) &&
-		(strings.Contains(text, "repo") || strings.Contains(text, "repositories"))
-}
-
-func (h *GeneralHandler) handleListRepos(ctx context.Context, channelID, userID, text, responseURL string) {
-	owner, err := h.ghClient.ResolveOwner(ctx)
-	if err != nil {
-		log.Printf("[user=%s channel=%s] failed to resolve owner for listing repos: %v", userID, channelID, err)
-		_ = ovadslack.RespondToURL(responseURL, fmt.Sprintf("Failed to determine organization: %v", err), true)
-		return
-	}
-
-	repos, err := h.ghClient.ListOrgRepos(ctx, owner)
-	if err != nil {
-		log.Printf("[user=%s channel=%s] org repo list failed, trying user repos: %v", userID, channelID, err)
-		repos, err = h.ghClient.ListUserRepos(ctx)
+	for i := 0; i < maxToolRounds; i++ {
+		resp, err := h.modelsClient.CompleteWithTools(ctx, messages, tools)
 		if err != nil {
-			log.Printf("[user=%s channel=%s] failed to list user repos: %v", userID, channelID, err)
-			_ = ovadslack.RespondToURL(responseURL, fmt.Sprintf("Failed to list repositories: %v", err), true)
+			log.Printf("[user=%s channel=%s] LLM completion failed for general query: %v", userID, channelID, err)
+			_ = ovadslack.RespondToURL(responseURL, fmt.Sprintf("Failed to process request: %v", err), true)
 			return
+		}
+
+		if len(resp.Choices) == 0 {
+			log.Printf("[user=%s channel=%s] LLM returned no choices", userID, channelID)
+			_ = ovadslack.RespondToURL(responseURL, "No response from the model.", true)
+			return
+		}
+
+		choice := resp.Choices[0]
+
+		if len(choice.Message.ToolCalls) == 0 {
+			log.Printf("[user=%s channel=%s] general query completed successfully", userID, channelID)
+			if err := ovadslack.RespondToURL(responseURL, choice.Message.Content, false); err != nil {
+				log.Printf("[user=%s channel=%s] failed to post general response: %v", userID, channelID, err)
+			}
+			return
+		}
+
+		messages = append(messages, github.ChatMessage{
+			Role:      "assistant",
+			ToolCalls: choice.Message.ToolCalls,
+		})
+
+		for _, tc := range choice.Message.ToolCalls {
+			log.Printf("[user=%s channel=%s] LLM called tool: %s(%s)", userID, channelID, tc.Function.Name, tc.Function.Arguments)
+			result := h.executeTool(ctx, channelID, userID, tc.Function.Name, tc.Function.Arguments)
+			messages = append(messages, github.NewToolResultMessage(tc.ID, result))
 		}
 	}
 
-	if len(repos) == 0 {
-		_ = ovadslack.RespondToURL(responseURL, fmt.Sprintf("No repositories found for *%s*.", owner), false)
-		return
-	}
+	log.Printf("[user=%s channel=%s] exceeded max tool rounds", userID, channelID)
+	_ = ovadslack.RespondToURL(responseURL, "The request required too many steps. Please try a simpler query.", true)
+}
 
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "*Repositories for %s* (%d total):\n", owner, len(repos))
-	for _, repo := range repos {
-		fmt.Fprintf(&sb, "- `%s`\n", repo)
-	}
+func (h *GeneralHandler) systemPrompt() string {
+	return `You are ovad, a DevOps and engineering assistant running inside Slack.
+You have access to tools that interact with GitHub. Use them to answer the user's request with real data.
+When presenting results, use Slack-compatible markdown formatting. Keep answers concise.
+Available ovad slash commands for reference:
+- /ovad debug the latest messages - analyze recent channel messages
+- /ovad add env var KEY=VALUE in file.tf in my-repo repository - modify files via PR`
+}
 
-	log.Printf("[user=%s channel=%s] listed %d repositories for %s", userID, channelID, len(repos), owner)
-	if err := ovadslack.RespondToURL(responseURL, sb.String(), false); err != nil {
-		log.Printf("[user=%s channel=%s] failed to post repo list: %v", userID, channelID, err)
+func (h *GeneralHandler) buildTools() []github.Tool {
+	return []github.Tool{
+		{
+			Type: "function",
+			Function: github.ToolFunction{
+				Name:        "list_org_repos",
+				Description: "List all repositories in the GitHub organization that the bot has access to.",
+				Parameters:  json.RawMessage(`{"type":"object","properties":{}}`),
+			},
+		},
+		{
+			Type: "function",
+			Function: github.ToolFunction{
+				Name:        "list_user_repos",
+				Description: "List all repositories accessible by the authenticated GitHub user.",
+				Parameters:  json.RawMessage(`{"type":"object","properties":{}}`),
+			},
+		},
+		{
+			Type: "function",
+			Function: github.ToolFunction{
+				Name:        "get_file_content",
+				Description: "Read the content of a file from a GitHub repository.",
+				Parameters: json.RawMessage(`{
+					"type":"object",
+					"properties":{
+						"repo":{"type":"string","description":"Repository name (without owner)"},
+						"path":{"type":"string","description":"File path within the repository"},
+						"branch":{"type":"string","description":"Branch name (optional, uses default branch if empty)"}
+					},
+					"required":["repo","path"]
+				}`),
+			},
+		},
+		{
+			Type: "function",
+			Function: github.ToolFunction{
+				Name:        "get_repo_default_branch",
+				Description: "Get the default branch name of a repository.",
+				Parameters: json.RawMessage(`{
+					"type":"object",
+					"properties":{
+						"repo":{"type":"string","description":"Repository name (without owner)"}
+					},
+					"required":["repo"]
+				}`),
+			},
+		},
+		{
+			Type: "function",
+			Function: github.ToolFunction{
+				Name:        "get_authenticated_user",
+				Description: "Get the GitHub username of the authenticated bot user.",
+				Parameters:  json.RawMessage(`{"type":"object","properties":{}}`),
+			},
+		},
+		{
+			Type: "function",
+			Function: github.ToolFunction{
+				Name:        "resolve_owner",
+				Description: "Resolve the GitHub organization or user that owns repositories.",
+				Parameters:  json.RawMessage(`{"type":"object","properties":{}}`),
+			},
+		},
 	}
 }
 
-func (h *GeneralHandler) handleGenericQuestion(ctx context.Context, channelID, userID, text, responseURL string) {
-	systemPrompt := `You are ovad, a helpful DevOps and engineering assistant running inside Slack.
-You can answer general questions about DevOps, cloud infrastructure, CI/CD, Kubernetes, Terraform, GitHub, and software engineering.
-Keep answers concise and actionable. Use Slack-compatible markdown formatting.
-Available ovad commands:
-- Debug: analyze recent channel messages for errors/alerts (e.g., "/ovad debug the latest messages")
-- File modification: modify files in GitHub repos via PR (e.g., "/ovad add env var KEY=VALUE in file.tf in my-repo repository")
-- List repositories: list all repos in the organization (e.g., "/ovad list all repositories")`
+func (h *GeneralHandler) executeTool(ctx context.Context, channelID, userID, name, argsJSON string) string {
+	switch name {
+	case "list_org_repos":
+		owner, err := h.ghClient.ResolveOwner(ctx)
+		if err != nil {
+			return fmt.Sprintf("Error resolving owner: %v", err)
+		}
+		repos, err := h.ghClient.ListOrgRepos(ctx, owner)
+		if err != nil {
+			return fmt.Sprintf("Error listing org repos: %v", err)
+		}
+		if len(repos) == 0 {
+			return fmt.Sprintf("No repositories found for organization %s.", owner)
+		}
+		log.Printf("[user=%s channel=%s] listed %d org repos for %s", userID, channelID, len(repos), owner)
+		return fmt.Sprintf("Organization: %s\nRepositories (%d):\n%s", owner, len(repos), strings.Join(repos, "\n"))
 
-	response, err := h.modelsClient.Complete(ctx, systemPrompt, text)
-	if err != nil {
-		log.Printf("[user=%s channel=%s] LLM completion failed for general query: %v", userID, channelID, err)
-		_ = ovadslack.RespondToURL(responseURL, fmt.Sprintf("Failed to process request: %v", err), true)
-		return
-	}
+	case "list_user_repos":
+		repos, err := h.ghClient.ListUserRepos(ctx)
+		if err != nil {
+			return fmt.Sprintf("Error listing user repos: %v", err)
+		}
+		if len(repos) == 0 {
+			return "No repositories found for the authenticated user."
+		}
+		log.Printf("[user=%s channel=%s] listed %d user repos", userID, channelID, len(repos))
+		return fmt.Sprintf("Repositories (%d):\n%s", len(repos), strings.Join(repos, "\n"))
 
-	log.Printf("[user=%s channel=%s] general query completed successfully", userID, channelID)
-	if err := ovadslack.RespondToURL(responseURL, response, false); err != nil {
-		log.Printf("[user=%s channel=%s] failed to post general response: %v", userID, channelID, err)
+	case "get_file_content":
+		var args struct {
+			Repo   string `json:"repo"`
+			Path   string `json:"path"`
+			Branch string `json:"branch"`
+		}
+		if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+			return fmt.Sprintf("Error parsing arguments: %v", err)
+		}
+		owner, err := h.ghClient.ResolveOwner(ctx)
+		if err != nil {
+			return fmt.Sprintf("Error resolving owner: %v", err)
+		}
+		branch := args.Branch
+		if branch == "" {
+			branch, err = h.ghClient.GetDefaultBranch(ctx, owner, args.Repo)
+			if err != nil {
+				return fmt.Sprintf("Error getting default branch: %v", err)
+			}
+		}
+		content, _, err := h.ghClient.GetFileContent(ctx, owner, args.Repo, args.Path, branch)
+		if err != nil {
+			return fmt.Sprintf("Error reading file: %v", err)
+		}
+		if len(content) > 3000 {
+			content = content[:3000] + "\n... (truncated)"
+		}
+		return content
+
+	case "get_repo_default_branch":
+		var args struct {
+			Repo string `json:"repo"`
+		}
+		if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+			return fmt.Sprintf("Error parsing arguments: %v", err)
+		}
+		owner, err := h.ghClient.ResolveOwner(ctx)
+		if err != nil {
+			return fmt.Sprintf("Error resolving owner: %v", err)
+		}
+		branch, err := h.ghClient.GetDefaultBranch(ctx, owner, args.Repo)
+		if err != nil {
+			return fmt.Sprintf("Error: %v", err)
+		}
+		return fmt.Sprintf("Default branch for %s: %s", args.Repo, branch)
+
+	case "get_authenticated_user":
+		user, err := h.ghClient.GetAuthenticatedUser(ctx)
+		if err != nil {
+			return fmt.Sprintf("Error: %v", err)
+		}
+		return fmt.Sprintf("Authenticated as: %s", user)
+
+	case "resolve_owner":
+		owner, err := h.ghClient.ResolveOwner(ctx)
+		if err != nil {
+			return fmt.Sprintf("Error: %v", err)
+		}
+		return fmt.Sprintf("Resolved owner: %s", owner)
+
+	default:
+		return fmt.Sprintf("Unknown tool: %s", name)
 	}
 }
