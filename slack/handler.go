@@ -8,7 +8,7 @@ import (
 	slacklib "github.com/slack-go/slack"
 )
 
-type CommandHandler func(channelID, userID, text string)
+type CommandHandler func(channelID, userID, text, responseURL string)
 
 type Handler struct {
 	signingSecret  string
@@ -54,6 +54,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte("Processing your request..."))
 
 	go func() {
-		h.commandHandler(cmd.ChannelID, cmd.UserID, cmd.Text)
+		h.commandHandler(cmd.ChannelID, cmd.UserID, cmd.Text, cmd.ResponseURL)
 	}()
 }

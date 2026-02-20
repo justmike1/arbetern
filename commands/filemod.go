@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/justmike1/ovad/github"
+	ovadslack "github.com/justmike1/ovad/slack"
 )
 
 type FileModHandler struct {
@@ -25,34 +26,34 @@ type fileModParams struct {
 var repoPattern = regexp.MustCompile(`(?i)in\s+(\S+)\s+repository`)
 var filePattern = regexp.MustCompile(`(?i)in\s+(\S+\.\w+)`)
 
-func (h *FileModHandler) Execute(channelID, userID, text string) {
+func (h *FileModHandler) Execute(channelID, userID, text, responseURL string) {
 	ctx := context.Background()
 
 	params, err := h.parseParams(ctx, text)
 	if err != nil {
 		log.Printf("failed to parse file modification params: %v", err)
-		_ = h.slackClient.PostEphemeral(channelID, userID, fmt.Sprintf("Could not understand the request: %v", err))
+		_ = ovadslack.RespondToURL(responseURL, fmt.Sprintf("Could not understand the request: %v", err), true)
 		return
 	}
 
 	owner, err := h.ghClient.ResolveOwner(ctx)
 	if err != nil {
 		log.Printf("failed to resolve owner: %v", err)
-		_ = h.slackClient.PostEphemeral(channelID, userID, fmt.Sprintf("Failed to determine repository owner: %v", err))
+		_ = ovadslack.RespondToURL(responseURL, fmt.Sprintf("Failed to determine repository owner: %v", err), true)
 		return
 	}
 
 	defaultBranch, err := h.ghClient.GetDefaultBranch(ctx, owner, params.Repository)
 	if err != nil {
 		log.Printf("failed to get default branch: %v", err)
-		_ = h.slackClient.PostEphemeral(channelID, userID, fmt.Sprintf("Failed to access repository %s/%s: %v", owner, params.Repository, err))
+		_ = ovadslack.RespondToURL(responseURL, fmt.Sprintf("Failed to access repository %s/%s: %v", owner, params.Repository, err), true)
 		return
 	}
 
 	currentContent, fileSHA, err := h.ghClient.GetFileContent(ctx, owner, params.Repository, params.FilePath, defaultBranch)
 	if err != nil {
 		log.Printf("failed to get file content: %v", err)
-		_ = h.slackClient.PostEphemeral(channelID, userID, fmt.Sprintf("Failed to read file %s: %v", params.FilePath, err))
+		_ = ovadslack.RespondToURL(responseURL, fmt.Sprintf("Failed to read file %s: %v", params.FilePath, err), true)
 		return
 	}
 
@@ -64,7 +65,7 @@ Return ONLY the complete updated file content with the requested changes applied
 	newContent, err := h.modelsClient.Complete(ctx, systemPrompt, userPrompt)
 	if err != nil {
 		log.Printf("LLM completion failed: %v", err)
-		_ = h.slackClient.PostEphemeral(channelID, userID, fmt.Sprintf("Failed to generate file modification: %v", err))
+		_ = ovadslack.RespondToURL(responseURL, fmt.Sprintf("Failed to generate file modification: %v", err), true)
 		return
 	}
 
@@ -72,14 +73,14 @@ Return ONLY the complete updated file content with the requested changes applied
 
 	if err := h.ghClient.CreateBranch(ctx, owner, params.Repository, defaultBranch, branchName); err != nil {
 		log.Printf("failed to create branch: %v", err)
-		_ = h.slackClient.PostEphemeral(channelID, userID, fmt.Sprintf("Failed to create branch: %v", err))
+		_ = ovadslack.RespondToURL(responseURL, fmt.Sprintf("Failed to create branch: %v", err), true)
 		return
 	}
 
 	commitMsg := fmt.Sprintf("ovad: %s", params.Description)
 	if err := h.ghClient.UpdateFile(ctx, owner, params.Repository, params.FilePath, branchName, commitMsg, []byte(newContent), fileSHA); err != nil {
 		log.Printf("failed to commit file: %v", err)
-		_ = h.slackClient.PostEphemeral(channelID, userID, fmt.Sprintf("Failed to commit changes: %v", err))
+		_ = ovadslack.RespondToURL(responseURL, fmt.Sprintf("Failed to commit changes: %v", err), true)
 		return
 	}
 
@@ -89,12 +90,12 @@ Return ONLY the complete updated file content with the requested changes applied
 	prURL, err := h.ghClient.CreatePullRequest(ctx, owner, params.Repository, defaultBranch, branchName, prTitle, prBody)
 	if err != nil {
 		log.Printf("failed to create PR: %v", err)
-		_ = h.slackClient.PostEphemeral(channelID, userID, fmt.Sprintf("Changes were committed to branch `%s` but PR creation failed: %v", branchName, err))
+		_ = ovadslack.RespondToURL(responseURL, fmt.Sprintf("Changes were committed to branch `%s` but PR creation failed: %v", branchName, err), true)
 		return
 	}
 
 	msg := fmt.Sprintf("Pull request created: %s", prURL)
-	if err := h.slackClient.PostMessage(channelID, msg); err != nil {
+	if err := ovadslack.RespondToURL(responseURL, msg, false); err != nil {
 		log.Printf("failed to post PR link: %v", err)
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/justmike1/ovad/github"
+	ovadslack "github.com/justmike1/ovad/slack"
 )
 
 const channelHistoryLimit = 20
@@ -16,18 +17,18 @@ type DebugHandler struct {
 	modelsClient *github.ModelsClient
 }
 
-func (h *DebugHandler) Execute(channelID, userID, text string) {
+func (h *DebugHandler) Execute(channelID, userID, text, responseURL string) {
 	ctx := context.Background()
 
 	messages, err := h.slackClient.FetchChannelHistory(channelID, channelHistoryLimit)
 	if err != nil {
 		log.Printf("failed to fetch channel history: %v", err)
-		_ = h.slackClient.PostEphemeral(channelID, userID, fmt.Sprintf("Failed to read channel history: %v", err))
+		_ = ovadslack.RespondToURL(responseURL, fmt.Sprintf("Failed to read channel history: %v", err), true)
 		return
 	}
 
 	if len(messages) == 0 {
-		_ = h.slackClient.PostEphemeral(channelID, userID, "No messages found in this channel to analyze.")
+		_ = ovadslack.RespondToURL(responseURL, "No messages found in this channel to analyze.", true)
 		return
 	}
 
@@ -50,11 +51,11 @@ Be concise and actionable.`
 	response, err := h.modelsClient.Complete(ctx, systemPrompt, userPrompt)
 	if err != nil {
 		log.Printf("LLM completion failed: %v", err)
-		_ = h.slackClient.PostEphemeral(channelID, userID, fmt.Sprintf("Failed to analyze messages: %v", err))
+		_ = ovadslack.RespondToURL(responseURL, fmt.Sprintf("Failed to analyze messages: %v", err), true)
 		return
 	}
 
-	if err := h.slackClient.PostMessage(channelID, response); err != nil {
+	if err := ovadslack.RespondToURL(responseURL, response, false); err != nil {
 		log.Printf("failed to post debug response: %v", err)
 	}
 }
