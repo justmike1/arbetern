@@ -24,6 +24,9 @@ func main() {
 	handler := ovadslack.NewHandler(cfg.SlackSigningSecret, router.Handle)
 
 	http.Handle("/webhook", handler)
+	http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
 
 	log.Printf("ovad server starting on :%s", cfg.Port)
 	if err := http.ListenAndServe(":"+cfg.Port, nil); err != nil {

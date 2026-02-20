@@ -1,0 +1,6 @@
+apiVersion: v2
+name: ovad
+description: AI-powered Slack bot for DevOps assistance using GitHub Models
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
