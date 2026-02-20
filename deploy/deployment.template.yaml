@@ -1,0 +1,93 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ovad
+  labels:
+    app: ovad
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ovad
+  template:
+    metadata:
+      labels:
+        app: ovad
+    spec:
+      containers:
+        - name: ovad
+          image: ghcr.io/justmike1/ovad:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+            - name: GITHUB_MODEL
+              value: "openai/gpt-4o" # options: openai/gpt-4o, meta/llama-3.1-405b-instruct, etc.
+            - name: SLACK_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: ovad-secrets
+                  key: slack-bot-token
+            - name: SLACK_SIGNING_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: ovad-secrets
+                  key: slack-signing-secret
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: ovad-secrets
+                  key: github-token
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 128Mi
+          livenessProbe:
+            httpGet:
+              path: /webhook
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /webhook
+              port: 8080
+            initialDelaySeconds: 3
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ovad
+  labels:
+    app: ovad
+spec:
+  type: ClusterIP
+  selector:
+    app: ovad
+  ports:
+    - port: 80
+      targetPort: 8080
+      protocol: TCP
+---
+# Create the secret before applying:
+#
+#   kubectl create secret generic ovad-secrets \
+#     --from-literal=slack-bot-token=xoxb-1234567890-abcdefghijklmnop \
+#     --from-literal=slack-signing-secret=abc123def456 \
+#     --from-literal=github-token=ghp_xxxxxxxxxxxxxxxxxxxx
+#
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ovad-secrets
+type: Opaque
+stringData:
+  slack-bot-token: "xoxb-EXAMPLE-TOKEN"
+  slack-signing-secret: "EXAMPLE-SIGNING-SECRET"
+  github-token: "ghp_EXAMPLE-GITHUB-TOKEN"

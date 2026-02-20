@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - A Slack workspace where you have admin permissions
-- The OVAD server deployed and accessible via a public URL (e.g., `https://ovad.example.com`)
+- A public URL where the OVAD server will be deployed (e.g., `https://ovad.example.com`). You will configure and deploy the server in Step 6 after obtaining the Slack credentials.
 
 ## Step 1: Create a Slack App
 
