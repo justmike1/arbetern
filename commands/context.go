@@ -123,6 +123,11 @@ func extractMessageContent(msg slacklib.Message) string {
 		for _, f := range att.Fields {
 			attParts = append(attParts, f.Title+": "+f.Value)
 		}
+		for _, action := range att.Actions {
+			if action.URL != "" {
+				attParts = append(attParts, action.Text+": "+action.URL)
+			}
+		}
 		if len(attParts) == 0 && att.Fallback != "" {
 			attParts = append(attParts, att.Fallback)
 		}

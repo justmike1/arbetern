@@ -4,6 +4,11 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"io"
+	"net/http"
+	"regexp"
+	"strconv"
+	"strings"
 	"time"
 
 	gh "github.com/google/go-github/v60/github"
@@ -157,4 +162,158 @@ func (c *Client) ListUserRepos(ctx context.Context) ([]string, error) {
 		opts.Page = resp.NextPage
 	}
 	return allRepos, nil
+}
+
+var workflowRunURLPattern = regexp.MustCompile(`https://github\.com/([^/]+)/([^/]+)/actions/runs/(\d+)`)
+
+func ParseWorkflowRunURL(rawURL string) (owner, repo string, runID int64, err error) {
+	matches := workflowRunURLPattern.FindStringSubmatch(rawURL)
+	if len(matches) != 4 {
+		return "", "", 0, fmt.Errorf("not a valid GitHub Actions workflow run URL: %s", rawURL)
+	}
+	runID, err = strconv.ParseInt(matches[3], 10, 64)
+	if err != nil {
+		return "", "", 0, fmt.Errorf("invalid run ID in URL: %w", err)
+	}
+	return matches[1], matches[2], runID, nil
+}
+
+func ExtractWorkflowRunURLs(text string) []string {
+	return workflowRunURLPattern.FindAllString(text, -1)
+}
+
+type WorkflowRunSummary struct {
+	RunID      int64
+	Name       string
+	Status     string
+	Conclusion string
+	URL        string
+	Jobs       []WorkflowJobSummary
+}
+
+type WorkflowJobSummary struct {
+	Name       string
+	Status     string
+	Conclusion string
+	Steps      []WorkflowStepSummary
+	LogSnippet string
+}
+
+type WorkflowStepSummary struct {
+	Name       string
+	Status     string
+	Conclusion string
+}
+
+func (c *Client) GetWorkflowRunSummary(ctx context.Context, owner, repo string, runID int64) (*WorkflowRunSummary, error) {
+	run, _, err := c.api.Actions.GetWorkflowRunByID(ctx, owner, repo, runID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get workflow run %d: %w", runID, err)
+	}
+
+	summary := &WorkflowRunSummary{
+		RunID:      runID,
+		Name:       run.GetName(),
+		Status:     run.GetStatus(),
+		Conclusion: run.GetConclusion(),
+		URL:        run.GetHTMLURL(),
+	}
+
+	jobs, _, err := c.api.Actions.ListWorkflowJobs(ctx, owner, repo, runID, nil)
+	if err != nil {
+		return summary, fmt.Errorf("failed to list jobs for run %d: %w", runID, err)
+	}
+
+	for _, job := range jobs.Jobs {
+		js := WorkflowJobSummary{
+			Name:       job.GetName(),
+			Status:     job.GetStatus(),
+			Conclusion: job.GetConclusion(),
+		}
+		for _, step := range job.Steps {
+			js.Steps = append(js.Steps, WorkflowStepSummary{
+				Name:       step.GetName(),
+				Status:     step.GetStatus(),
+				Conclusion: step.GetConclusion(),
+			})
+		}
+		if job.GetConclusion() == "failure" {
+			logs, err := c.fetchJobLogs(ctx, owner, repo, job.GetID())
+			if err == nil {
+				js.LogSnippet = logs
+			}
+		}
+		summary.Jobs = append(summary.Jobs, js)
+	}
+
+	return summary, nil
+}
+
+func (c *Client) fetchJobLogs(ctx context.Context, owner, repo string, jobID int64) (string, error) {
+	logURL, _, err := c.api.Actions.GetWorkflowJobLogs(ctx, owner, repo, jobID, 2)
+	if err != nil {
+		return "", fmt.Errorf("failed to get job log URL: %w", err)
+	}
+
+	resp, err := http.Get(logURL.String())
+	if err != nil {
+		return "", fmt.Errorf("failed to download job logs: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read job logs: %w", err)
+	}
+
+	logs := string(body)
+	return trimLogs(logs, 4000), nil
+}
+
+func trimLogs(logs string, maxLen int) string {
+	if len(logs) <= maxLen {
+		return logs
+	}
+	lines := strings.Split(logs, "\n")
+	var result []string
+	totalLen := 0
+	for i := len(lines) - 1; i >= 0; i-- {
+		lineLen := len(lines[i]) + 1
+		if totalLen+lineLen > maxLen {
+			break
+		}
+		result = append([]string{lines[i]}, result...)
+		totalLen += lineLen
+	}
+	return "... (log truncated, showing last lines)\n" + strings.Join(result, "\n")
+}
+
+func FormatWorkflowRunSummary(s *WorkflowRunSummary) string {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "Workflow Run: %s (ID: %d)\n", s.Name, s.RunID)
+	fmt.Fprintf(&sb, "Status: %s | Conclusion: %s\n", s.Status, s.Conclusion)
+	fmt.Fprintf(&sb, "URL: %s\n\n", s.URL)
+
+	for _, job := range s.Jobs {
+		icon := "+"
+		if job.Conclusion == "failure" {
+			icon = "X"
+		}
+		fmt.Fprintf(&sb, "[%s] Job: %s (%s)\n", icon, job.Name, job.Conclusion)
+		for _, step := range job.Steps {
+			stepIcon := " "
+			switch step.Conclusion {
+			case "failure":
+				stepIcon = "X"
+			case "success":
+				stepIcon = "+"
+			}
+			fmt.Fprintf(&sb, "  [%s] %s (%s)\n", stepIcon, step.Name, step.Conclusion)
+		}
+		if job.LogSnippet != "" {
+			fmt.Fprintf(&sb, "\n  Failed job logs:\n  %s\n", strings.ReplaceAll(job.LogSnippet, "\n", "\n  "))
+		}
+		sb.WriteString("\n")
+	}
+	return sb.String()
 }

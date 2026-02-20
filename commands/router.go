@@ -50,6 +50,7 @@ func (r *Router) Handle(channelID, userID, text, responseURL string) {
 		log.Printf("[user=%s channel=%s] routed to: debug", userID, channelID)
 		handler := &DebugHandler{
 			slackClient:     r.slackClient,
+			ghClient:        r.ghClient,
 			modelsClient:    r.modelsClient,
 			contextProvider: r.contextProvider,
 			memory:          r.memory,
@@ -116,7 +117,7 @@ func (r *Router) handleAmbiguous(channelID, userID, text, responseURL string) {
 
 	switch {
 	case strings.Contains(classification, "debug"):
-		handler := &DebugHandler{slackClient: r.slackClient, modelsClient: r.modelsClient, contextProvider: r.contextProvider, memory: r.memory}
+		handler := &DebugHandler{slackClient: r.slackClient, ghClient: r.ghClient, modelsClient: r.modelsClient, contextProvider: r.contextProvider, memory: r.memory}
 		handler.Execute(channelID, userID, text, responseURL)
 	case strings.Contains(classification, "filemod"):
 		handler := &FileModHandler{slackClient: r.slackClient, ghClient: r.ghClient, modelsClient: r.modelsClient, contextProvider: r.contextProvider, memory: r.memory}
