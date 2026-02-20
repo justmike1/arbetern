@@ -22,7 +22,7 @@ type DebugHandler struct {
 func (h *DebugHandler) Execute(channelID, userID, text, responseURL string) {
 	ctx := context.Background()
 
-	channelContext, err := h.contextProvider.GetChannelContext(channelID)
+	channelContext, err := h.contextProvider.GetFreshChannelContext(channelID)
 	if err != nil {
 		log.Printf("[user=%s channel=%s] failed to fetch channel context: %v", userID, channelID, err)
 		_ = ovadslack.RespondToURL(responseURL, fmt.Sprintf("Failed to read channel history: %v", err), true)

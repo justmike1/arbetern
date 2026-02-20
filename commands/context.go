@@ -41,6 +41,10 @@ func (cp *ContextProvider) GetChannelContext(channelID string) (string, error) {
 	}
 	cp.mu.Unlock()
 
+	return cp.GetFreshChannelContext(channelID)
+}
+
+func (cp *ContextProvider) GetFreshChannelContext(channelID string) (string, error) {
 	messages, err := cp.slackClient.FetchChannelHistory(channelID, contextMessageLimit)
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch channel context: %w", err)
@@ -61,14 +65,20 @@ func formatMessages(messages []slacklib.Message) string {
 		return "(no recent messages)"
 	}
 
+	total := len(messages)
 	var sb strings.Builder
-	for i := len(messages) - 1; i >= 0; i-- {
+	fmt.Fprintf(&sb, "Messages listed from NEWEST (message 1) to OLDEST (message %d):\n\n", total)
+	for i, idx := 0, 1; i < total; i, idx = i+1, idx+1 {
 		msg := messages[i]
 		ts := msg.Timestamp
 		if t, err := tsToTime(ts); err == nil {
 			ts = t.Format("15:04:05")
 		}
-		fmt.Fprintf(&sb, "[%s @%s]: %s\n", ts, msg.User, msg.Text)
+		label := ""
+		if idx == 1 {
+			label = " [LATEST]"
+		}
+		fmt.Fprintf(&sb, "Message %d%s [%s @%s]: %s\n", idx, label, ts, msg.User, msg.Text)
 	}
 	return sb.String()
 }
