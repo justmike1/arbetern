@@ -1,0 +1,108 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/justmike1/ovad
+  pullPolicy: Always
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  automount: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext: {}
+
+securityContext: {}
+
+containerPort: 8080
+
+env:
+  PORT: "8080"
+  GITHUB_MODEL: "openai/gpt-4o" # options: openai/gpt-4o, meta/llama-3.1-405b-instruct, etc.
+
+secretName: ovad-secrets
+
+# Set to true to have the chart create the Secret resource.
+# If false, create the secret externally before installing:
+#   kubectl create secret generic ovad-secrets \
+#     --from-literal=slack-bot-token=xoxb-... \
+#     --from-literal=slack-signing-secret=... \
+#     --from-literal=github-token=ghp_...
+createSecret: false
+
+secretValues:
+  slack-bot-token: "xoxb-EXAMPLE-TOKEN"
+  slack-signing-secret: "EXAMPLE-SIGNING-SECRET"
+  github-token: "ghp_EXAMPLE-GITHUB-TOKEN"
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: ovad.example.local
+      paths:
+        - path: /
+          pathType: ImplementationSpecific
+  tls: []
+
+httpRoute:
+  enabled: false
+  annotations: {}
+  parentRefs:
+    - name: gateway
+      sectionName: http
+  hostnames:
+    - ovad.example.local
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 64Mi
+  limits:
+    cpu: 500m
+    memory: 128Mi
+
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 30
+
+readinessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 3
+  periodSeconds: 10
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 100
+  targetCPUUtilizationPercentage: 80
+
+volumes: []
+volumesMounts: []
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
