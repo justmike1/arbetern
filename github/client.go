@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"io"
-	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
@@ -183,12 +181,13 @@ func ExtractWorkflowRunURLs(text string) []string {
 }
 
 type WorkflowRunSummary struct {
-	RunID      int64
-	Name       string
-	Status     string
-	Conclusion string
-	URL        string
-	Jobs       []WorkflowJobSummary
+	RunID       int64
+	Name        string
+	Status      string
+	Conclusion  string
+	URL         string
+	Jobs        []WorkflowJobSummary
+	Annotations []WorkflowAnnotation
 }
 
 type WorkflowJobSummary struct {
@@ -196,13 +195,19 @@ type WorkflowJobSummary struct {
 	Status     string
 	Conclusion string
 	Steps      []WorkflowStepSummary
-	LogSnippet string
 }
 
 type WorkflowStepSummary struct {
 	Name       string
 	Status     string
 	Conclusion string
+}
+
+type WorkflowAnnotation struct {
+	JobName string
+	Level   string
+	Message string
+	Title   string
 }
 
 func (c *Client) GetWorkflowRunSummary(ctx context.Context, owner, repo string, runID int64) (*WorkflowRunSummary, error) {
@@ -237,55 +242,42 @@ func (c *Client) GetWorkflowRunSummary(ctx context.Context, owner, repo string, 
 				Conclusion: step.GetConclusion(),
 			})
 		}
-		if job.GetConclusion() == "failure" {
-			logs, err := c.fetchJobLogs(ctx, owner, repo, job.GetID())
-			if err == nil {
-				js.LogSnippet = logs
-			}
-		}
 		summary.Jobs = append(summary.Jobs, js)
+
+		checkRunID := parseCheckRunID(job.GetCheckRunURL())
+		if checkRunID == 0 {
+			continue
+		}
+		annotations, _, err := c.api.Checks.ListCheckRunAnnotations(ctx, owner, repo, checkRunID, nil)
+		if err != nil {
+			continue
+		}
+		for _, ann := range annotations {
+			summary.Annotations = append(summary.Annotations, WorkflowAnnotation{
+				JobName: job.GetName(),
+				Level:   ann.GetAnnotationLevel(),
+				Message: ann.GetMessage(),
+				Title:   ann.GetTitle(),
+			})
+		}
 	}
 
 	return summary, nil
 }
 
-func (c *Client) fetchJobLogs(ctx context.Context, owner, repo string, jobID int64) (string, error) {
-	logURL, _, err := c.api.Actions.GetWorkflowJobLogs(ctx, owner, repo, jobID, 2)
+func parseCheckRunID(checkRunURL string) int64 {
+	if checkRunURL == "" {
+		return 0
+	}
+	parts := strings.Split(checkRunURL, "/")
+	if len(parts) == 0 {
+		return 0
+	}
+	id, err := strconv.ParseInt(parts[len(parts)-1], 10, 64)
 	if err != nil {
-		return "", fmt.Errorf("failed to get job log URL: %w", err)
+		return 0
 	}
-
-	resp, err := http.Get(logURL.String())
-	if err != nil {
-		return "", fmt.Errorf("failed to download job logs: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("failed to read job logs: %w", err)
-	}
-
-	logs := string(body)
-	return trimLogs(logs, 4000), nil
-}
-
-func trimLogs(logs string, maxLen int) string {
-	if len(logs) <= maxLen {
-		return logs
-	}
-	lines := strings.Split(logs, "\n")
-	var result []string
-	totalLen := 0
-	for i := len(lines) - 1; i >= 0; i-- {
-		lineLen := len(lines[i]) + 1
-		if totalLen+lineLen > maxLen {
-			break
-		}
-		result = append([]string{lines[i]}, result...)
-		totalLen += lineLen
-	}
-	return "... (log truncated, showing last lines)\n" + strings.Join(result, "\n")
+	return id
 }
 
 func FormatWorkflowRunSummary(s *WorkflowRunSummary) string {
@@ -310,10 +302,20 @@ func FormatWorkflowRunSummary(s *WorkflowRunSummary) string {
 			}
 			fmt.Fprintf(&sb, "  [%s] %s (%s)\n", stepIcon, step.Name, step.Conclusion)
 		}
-		if job.LogSnippet != "" {
-			fmt.Fprintf(&sb, "\n  Failed job logs:\n  %s\n", strings.ReplaceAll(job.LogSnippet, "\n", "\n  "))
-		}
 		sb.WriteString("\n")
 	}
+
+	if len(s.Annotations) > 0 {
+		sb.WriteString("Annotations:\n")
+		for _, ann := range s.Annotations {
+			level := strings.ToUpper(ann.Level)
+			fmt.Fprintf(&sb, "  [%s] %s\n", level, ann.JobName)
+			if ann.Title != "" {
+				fmt.Fprintf(&sb, "    Title: %s\n", ann.Title)
+			}
+			fmt.Fprintf(&sb, "    Message: %s\n", ann.Message)
+		}
+	}
+
 	return sb.String()
 }

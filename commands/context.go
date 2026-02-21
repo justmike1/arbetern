@@ -100,11 +100,12 @@ func formatMessages(messages []slacklib.Message) string {
 }
 
 func extractMessageContent(msg slacklib.Message) string {
+	var parts []string
+
 	if msg.Text != "" {
-		return msg.Text
+		parts = append(parts, msg.Text)
 	}
 
-	var parts []string
 	for _, att := range msg.Attachments {
 		var attParts []string
 		if att.Pretext != "" {
@@ -128,6 +129,7 @@ func extractMessageContent(msg slacklib.Message) string {
 				attParts = append(attParts, action.Text+": "+action.URL)
 			}
 		}
+		attParts = append(attParts, extractBlockURLs(att.Blocks.BlockSet)...)
 		if len(attParts) == 0 && att.Fallback != "" {
 			attParts = append(attParts, att.Fallback)
 		}
@@ -135,7 +137,40 @@ func extractMessageContent(msg slacklib.Message) string {
 			parts = append(parts, strings.Join(attParts, "\n"))
 		}
 	}
+
+	parts = append(parts, extractBlockURLs(msg.Blocks.BlockSet)...)
+
 	return strings.Join(parts, "\n---\n")
+}
+
+func extractBlockURLs(blocks []slacklib.Block) []string {
+	var urls []string
+	for _, block := range blocks {
+		switch b := block.(type) {
+		case *slacklib.ActionBlock:
+			if b.Elements != nil {
+				for _, elem := range b.Elements.ElementSet {
+					if btn, ok := elem.(*slacklib.ButtonBlockElement); ok && btn.URL != "" {
+						label := btn.ActionID
+						if btn.Text != nil {
+							label = btn.Text.Text
+						}
+						urls = append(urls, label+": "+btn.URL)
+					}
+				}
+			}
+		case *slacklib.SectionBlock:
+			if b.Accessory != nil && b.Accessory.ButtonElement != nil && b.Accessory.ButtonElement.URL != "" {
+				btn := b.Accessory.ButtonElement
+				label := btn.ActionID
+				if btn.Text != nil {
+					label = btn.Text.Text
+				}
+				urls = append(urls, label+": "+btn.URL)
+			}
+		}
+	}
+	return urls
 }
 
 func tsToTime(ts string) (time.Time, error) {
