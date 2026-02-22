@@ -74,8 +74,17 @@ func (r *Router) Handle(channelID, userID, text, responseURL string) {
 }
 
 func isIntroIntent(text string) bool {
-	introKeywords := []string{"introduce yourself", "who are you", "what are you", "what can you do", "help", "what do you do"}
-	for _, kw := range introKeywords {
+	// Exact-match keywords — the entire message must be exactly this.
+	exactKeywords := []string{"help", "hi", "hello"}
+	trimmed := strings.TrimSpace(text)
+	for _, kw := range exactKeywords {
+		if trimmed == kw {
+			return true
+		}
+	}
+	// Substring-match keywords — safe because they are multi-word and specific.
+	substringKeywords := []string{"introduce yourself", "who are you", "what are you", "what can you do", "what do you do"}
+	for _, kw := range substringKeywords {
 		if strings.Contains(text, kw) {
 			return true
 		}
