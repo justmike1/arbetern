@@ -93,6 +93,10 @@ func isIntroIntent(text string) bool {
 }
 
 func isDebugIntent(text string) bool {
+	// A GitHub Actions workflow run URL is an implicit debug request.
+	if len(github.ExtractWorkflowRunURLs(text)) > 0 {
+		return true
+	}
 	debugKeywords := []string{"debug", "analyze", "investigate", "diagnose", "what happened", "explain the error", "look at the latest"}
 	for _, kw := range debugKeywords {
 		if strings.Contains(text, kw) {

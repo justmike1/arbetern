@@ -35,7 +35,7 @@ func (h *DebugHandler) Execute(channelID, userID, text, responseURL string) {
 		return
 	}
 
-	workflowLogs := h.fetchWorkflowLogs(ctx, channelContext, userID, channelID)
+	workflowLogs := h.fetchWorkflowLogs(ctx, channelContext+"\n"+text, userID, channelID)
 
 	systemPrompt := prompts.MustGet("security") + "\n\n" + prompts.MustGet("debug")
 
