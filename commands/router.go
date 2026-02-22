@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/justmike1/ovad/github"
+	"github.com/justmike1/ovad/prompts"
 	ovadslack "github.com/justmike1/ovad/slack"
 )
 
@@ -49,6 +50,11 @@ func (r *Router) Handle(channelID, userID, text, responseURL string) {
 	lower := strings.ToLower(text)
 
 	switch {
+	case isIntroIntent(lower):
+		log.Printf("[user=%s channel=%s] routed to: intro", userID, channelID)
+		_ = ovadslack.RespondToURL(responseURL, prompts.MustGet("intro"), false)
+		return
+
 	case isDebugIntent(lower):
 		log.Printf("[user=%s channel=%s] routed to: debug", userID, channelID)
 		handler := &DebugHandler{
@@ -65,6 +71,16 @@ func (r *Router) Handle(channelID, userID, text, responseURL string) {
 		handler := &GeneralHandler{ghClient: r.ghClient, modelsClient: r.modelsClient, contextProvider: r.contextProvider, memory: r.memory}
 		handler.Execute(channelID, userID, text, responseURL)
 	}
+}
+
+func isIntroIntent(text string) bool {
+	introKeywords := []string{"introduce yourself", "who are you", "what are you", "what can you do", "help", "what do you do"}
+	for _, kw := range introKeywords {
+		if strings.Contains(text, kw) {
+			return true
+		}
+	}
+	return false
 }
 
 func isDebugIntent(text string) bool {
