@@ -120,6 +120,46 @@ func GenerateBranchName(prefix string) string {
 	return fmt.Sprintf("ovad/%s-%d", prefix, time.Now().Unix())
 }
 
+func (c *Client) SearchFiles(ctx context.Context, owner, repo, branch, pattern string) ([]string, error) {
+	ref, _, err := c.api.Git.GetRef(ctx, owner, repo, "refs/heads/"+branch)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get ref for %s: %w", branch, err)
+	}
+	tree, _, err := c.api.Git.GetTree(ctx, owner, repo, ref.Object.GetSHA(), true)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get tree: %w", err)
+	}
+	lowerPattern := strings.ToLower(pattern)
+	var matches []string
+	for _, entry := range tree.Entries {
+		path := entry.GetPath()
+		if strings.Contains(strings.ToLower(path), lowerPattern) {
+			matches = append(matches, path)
+		}
+	}
+	return matches, nil
+}
+
+func (c *Client) GetDirectoryContents(ctx context.Context, owner, repo, path, branch string) ([]string, error) {
+	opts := &gh.RepositoryContentGetOptions{Ref: branch}
+	_, dir, _, err := c.api.Repositories.GetContents(ctx, owner, repo, path, opts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get directory %s: %w", path, err)
+	}
+	if dir == nil {
+		return nil, fmt.Errorf("path %s is not a directory", path)
+	}
+	var entries []string
+	for _, entry := range dir {
+		name := entry.GetPath()
+		if entry.GetType() == "dir" {
+			name += "/"
+		}
+		entries = append(entries, name)
+	}
+	return entries, nil
+}
+
 func (c *Client) ListOrgRepos(ctx context.Context, org string) ([]string, error) {
 	var allRepos []string
 	opts := &gh.RepositoryListByOrgOptions{

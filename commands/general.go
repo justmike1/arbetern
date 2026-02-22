@@ -12,7 +12,7 @@ import (
 	ovadslack "github.com/justmike1/ovad/slack"
 )
 
-const maxToolRounds = 5
+const maxToolRounds = 20
 
 type GeneralHandler struct {
 	ghClient        *github.Client
@@ -163,6 +163,38 @@ func (h *GeneralHandler) buildTools() []github.Tool {
 				Parameters:  json.RawMessage(`{"type":"object","properties":{}}`),
 			},
 		},
+		{
+			Type: "function",
+			Function: github.ToolFunction{
+				Name:        "search_files",
+				Description: "Search for files in a repository by name or path pattern. Returns all file paths containing the search term. Use this FIRST when looking for a specific file — it is much faster than navigating directories one by one.",
+				Parameters: json.RawMessage(`{
+					"type":"object",
+					"properties":{
+						"repo":{"type":"string","description":"Repository name (without owner)"},
+						"pattern":{"type":"string","description":"Search term to match against file paths (case-insensitive, e.g. 'services.yaml' or 'amplify/main.tf')"},
+						"branch":{"type":"string","description":"Branch name (optional, uses default branch if empty)"}
+					},
+					"required":["repo","pattern"]
+				}`),
+			},
+		},
+		{
+			Type: "function",
+			Function: github.ToolFunction{
+				Name:        "list_directory",
+				Description: "List the files and subdirectories at a path in a GitHub repository. Use this when get_file_content fails because a path is a directory, or when you need to discover what files exist under a path.",
+				Parameters: json.RawMessage(`{
+					"type":"object",
+					"properties":{
+						"repo":{"type":"string","description":"Repository name (without owner)"},
+						"path":{"type":"string","description":"Directory path within the repository"},
+						"branch":{"type":"string","description":"Branch name (optional, uses default branch if empty)"}
+					},
+					"required":["repo","path"]
+				}`),
+			},
+		},
 	}
 }
 
@@ -216,10 +248,14 @@ func (h *GeneralHandler) executeTool(ctx context.Context, channelID, userID, nam
 		}
 		content, _, err := h.ghClient.GetFileContent(ctx, owner, args.Repo, args.Path, branch)
 		if err != nil {
-			return fmt.Sprintf("Error reading file: %v", err)
+			hint := ""
+			if strings.Contains(err.Error(), "404") {
+				hint = " This path may be a directory, or it may be nested under a provider subdirectory (e.g. aws/, azure/). Try list_directory on the parent path to discover the correct structure, then read the files you need."
+			}
+			return fmt.Sprintf("Error reading file: %v.%s", err, hint)
 		}
-		if len(content) > 3000 {
-			content = content[:3000] + "\n... (truncated)"
+		if len(content) > 8000 {
+			content = content[:8000] + "\n... (truncated — file is longer than shown, important content may follow)"
 		}
 		return content
 
@@ -253,6 +289,67 @@ func (h *GeneralHandler) executeTool(ctx context.Context, channelID, userID, nam
 			return fmt.Sprintf("Error: %v", err)
 		}
 		return fmt.Sprintf("Resolved owner: %s", owner)
+
+	case "search_files":
+		var args struct {
+			Repo    string `json:"repo"`
+			Pattern string `json:"pattern"`
+			Branch  string `json:"branch"`
+		}
+		if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+			return fmt.Sprintf("Error parsing arguments: %v", err)
+		}
+		owner, err := h.ghClient.ResolveOwner(ctx)
+		if err != nil {
+			return fmt.Sprintf("Error resolving owner: %v", err)
+		}
+		branch := args.Branch
+		if branch == "" {
+			branch, err = h.ghClient.GetDefaultBranch(ctx, owner, args.Repo)
+			if err != nil {
+				return fmt.Sprintf("Error getting default branch: %v", err)
+			}
+		}
+		matches, err := h.ghClient.SearchFiles(ctx, owner, args.Repo, branch, args.Pattern)
+		if err != nil {
+			return fmt.Sprintf("Error searching files: %v", err)
+		}
+		if len(matches) == 0 {
+			return fmt.Sprintf("No files matching '%s' found in %s.", args.Pattern, args.Repo)
+		}
+		log.Printf("[user=%s channel=%s] searched files in %s for '%s' (%d matches)", userID, channelID, args.Repo, args.Pattern, len(matches))
+		if len(matches) > 50 {
+			matches = matches[:50]
+			return fmt.Sprintf("Found %d+ matches (showing first 50):\n%s", len(matches), strings.Join(matches, "\n"))
+		}
+		return fmt.Sprintf("Found %d matches:\n%s", len(matches), strings.Join(matches, "\n"))
+
+	case "list_directory":
+		var args struct {
+			Repo   string `json:"repo"`
+			Path   string `json:"path"`
+			Branch string `json:"branch"`
+		}
+		if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+			return fmt.Sprintf("Error parsing arguments: %v", err)
+		}
+		owner, err := h.ghClient.ResolveOwner(ctx)
+		if err != nil {
+			return fmt.Sprintf("Error resolving owner: %v", err)
+		}
+		branch := args.Branch
+		if branch == "" {
+			branch, err = h.ghClient.GetDefaultBranch(ctx, owner, args.Repo)
+			if err != nil {
+				return fmt.Sprintf("Error getting default branch: %v", err)
+			}
+		}
+		entries, err := h.ghClient.GetDirectoryContents(ctx, owner, args.Repo, args.Path, branch)
+		if err != nil {
+			return fmt.Sprintf("Error listing directory: %v", err)
+		}
+		log.Printf("[user=%s channel=%s] listed directory %s/%s/%s (%d entries)", userID, channelID, args.Repo, branch, args.Path, len(entries))
+		return fmt.Sprintf("Contents of %s/%s:\n%s", args.Repo, args.Path, strings.Join(entries, "\n"))
 
 	case "fetch_channel_context":
 		context, err := h.contextProvider.GetChannelContext(channelID)

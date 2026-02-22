@@ -39,6 +39,11 @@ func (r *Router) Handle(channelID, userID, text, responseURL string) {
 
 	log.Printf("[user=%s channel=%s] received command: %s", userID, channelID, text)
 
+	auditMsg := fmt.Sprintf(":mag: <@%s> requested in <#%s>:\n> %s", userID, channelID, text)
+	if err := r.slackClient.PostMessage(channelID, auditMsg); err != nil {
+		log.Printf("[user=%s channel=%s] failed to post audit message: %v", userID, channelID, err)
+	}
+
 	_ = ovadslack.RespondToURL(responseURL, fmt.Sprintf("Processing request: _%s_", text), true)
 
 	r.memory.AddUserMessage(channelID, userID, text)
@@ -85,7 +90,7 @@ func isDebugIntent(text string) bool {
 }
 
 func isFileModIntent(text string) bool {
-	modKeywords := []string{"add env", "modify", "update file", "change file", "edit file", "add variable", "in repository", "in repo"}
+	modKeywords := []string{"add env", "modify", "update file", "change file", "edit file", "add variable"}
 	for _, kw := range modKeywords {
 		if strings.Contains(text, kw) {
 			return true
