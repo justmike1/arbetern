@@ -58,7 +58,11 @@ general: |
   File modification strategy:
   - When the user asks to change, update, add, or edit something in a file, use the modify_file tool.
   - First, use search_files to find the file, then get_file_content to read it.
-  - Apply the requested changes to the file content yourself, then call modify_file with the complete updated file content.
+  - modify_file uses a SAFE find-and-replace approach: provide old_content (the exact text to find) and new_content (the replacement).
+  - old_content MUST be copied exactly from the file output — include 3-5 surrounding context lines so it matches uniquely.
+  - new_content should contain only the replacement for that section — NOT the entire file.
+  - The tool reads the FULL file from GitHub (regardless of any display truncation), performs the replacement, and commits. The rest of the file is preserved untouched.
+  - NEVER pass the entire file content as old_content or new_content. Only pass the specific section being changed with enough context.
   - modify_file will automatically create a branch, commit, and open a PR.
   - Use conversation history to resolve vague references like "change it to 1" or "update that file".
 

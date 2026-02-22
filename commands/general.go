@@ -199,17 +199,18 @@ func (h *GeneralHandler) buildTools() []github.Tool {
 			Type: "function",
 			Function: github.ToolFunction{
 				Name:        "modify_file",
-				Description: "Modify a file in a GitHub repository by providing the complete new file content. This creates a new branch, commits the change, and creates a pull request. Use this when the user asks to change, update, add, or edit something in a file. You must first read the file with get_file_content, apply the requested changes yourself, then call this tool with the full updated content.",
+				Description: "Modify a file in a GitHub repository using a safe find-and-replace approach. Provide the exact text to find (old_content) and the replacement text (new_content). The tool reads the FULL file from GitHub, performs the replacement, then creates a branch, commits, and opens a PR. IMPORTANT: old_content must be an exact substring of the current file — include enough surrounding lines (3-5) will ensure a unique match. Only the matched section is replaced; the rest of the file is preserved.",
 				Parameters: json.RawMessage(`{
 					"type":"object",
 					"properties":{
 						"repo":{"type":"string","description":"Repository name (without owner)"},
 						"path":{"type":"string","description":"File path within the repository"},
-						"new_content":{"type":"string","description":"The complete new file content with the changes applied"},
+						"old_content":{"type":"string","description":"The exact text in the current file to find and replace. Include 3-5 surrounding context lines to ensure a unique match."},
+						"new_content":{"type":"string","description":"The replacement text that will replace old_content."},
 						"description":{"type":"string","description":"Short description of what was changed (used as commit message and PR title)"},
 						"branch":{"type":"string","description":"Base branch name (optional, uses default branch if empty)"}
 					},
-					"required":["repo","path","new_content","description"]
+					"required":["repo","path","old_content","new_content","description"]
 				}`),
 			},
 		},
@@ -381,6 +382,7 @@ func (h *GeneralHandler) executeTool(ctx context.Context, channelID, userID, nam
 		var args struct {
 			Repo        string `json:"repo"`
 			Path        string `json:"path"`
+			OldContent  string `json:"old_content"`
 			NewContent  string `json:"new_content"`
 			Description string `json:"description"`
 			Branch      string `json:"branch"`
@@ -399,16 +401,25 @@ func (h *GeneralHandler) executeTool(ctx context.Context, channelID, userID, nam
 				return fmt.Sprintf("Error getting default branch: %v", err)
 			}
 		}
-		_, fileSHA, err := h.ghClient.GetFileContent(ctx, owner, args.Repo, args.Path, baseBranch)
+		fullContent, fileSHA, err := h.ghClient.GetFileContent(ctx, owner, args.Repo, args.Path, baseBranch)
 		if err != nil {
-			return fmt.Sprintf("Error reading current file for SHA: %v", err)
+			return fmt.Sprintf("Error reading current file: %v", err)
 		}
+		// Perform find-and-replace on the full file content.
+		if !strings.Contains(fullContent, args.OldContent) {
+			return "Error: old_content not found in the file. Make sure old_content is an exact substring of the current file (including whitespace and indentation). Re-read the file with get_file_content and try again."
+		}
+		occurrences := strings.Count(fullContent, args.OldContent)
+		if occurrences > 1 {
+			return fmt.Sprintf("Error: old_content matches %d locations in the file. Include more surrounding context lines to make it unique.", occurrences)
+		}
+		updatedContent := strings.Replace(fullContent, args.OldContent, args.NewContent, 1)
 		branchName := github.GenerateBranchName("ovad")
 		if err := h.ghClient.CreateBranch(ctx, owner, args.Repo, baseBranch, branchName); err != nil {
 			return fmt.Sprintf("Error creating branch: %v", err)
 		}
 		commitMsg := fmt.Sprintf("ovad: %s", args.Description)
-		if err := h.ghClient.UpdateFile(ctx, owner, args.Repo, args.Path, branchName, commitMsg, []byte(args.NewContent), fileSHA); err != nil {
+		if err := h.ghClient.UpdateFile(ctx, owner, args.Repo, args.Path, branchName, commitMsg, []byte(updatedContent), fileSHA); err != nil {
 			return fmt.Sprintf("Error committing file: %v", err)
 		}
 		prTitle := fmt.Sprintf("ovad: %s", args.Description)
