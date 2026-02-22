@@ -195,6 +195,24 @@ func (h *GeneralHandler) buildTools() []github.Tool {
 				}`),
 			},
 		},
+		{
+			Type: "function",
+			Function: github.ToolFunction{
+				Name:        "modify_file",
+				Description: "Modify a file in a GitHub repository by providing the complete new file content. This creates a new branch, commits the change, and creates a pull request. Use this when the user asks to change, update, add, or edit something in a file. You must first read the file with get_file_content, apply the requested changes yourself, then call this tool with the full updated content.",
+				Parameters: json.RawMessage(`{
+					"type":"object",
+					"properties":{
+						"repo":{"type":"string","description":"Repository name (without owner)"},
+						"path":{"type":"string","description":"File path within the repository"},
+						"new_content":{"type":"string","description":"The complete new file content with the changes applied"},
+						"description":{"type":"string","description":"Short description of what was changed (used as commit message and PR title)"},
+						"branch":{"type":"string","description":"Base branch name (optional, uses default branch if empty)"}
+					},
+					"required":["repo","path","new_content","description"]
+				}`),
+			},
+		},
 	}
 }
 
@@ -358,6 +376,49 @@ func (h *GeneralHandler) executeTool(ctx context.Context, channelID, userID, nam
 		}
 		log.Printf("[user=%s channel=%s] fetched channel context via tool", userID, channelID)
 		return context
+
+	case "modify_file":
+		var args struct {
+			Repo        string `json:"repo"`
+			Path        string `json:"path"`
+			NewContent  string `json:"new_content"`
+			Description string `json:"description"`
+			Branch      string `json:"branch"`
+		}
+		if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+			return fmt.Sprintf("Error parsing arguments: %v", err)
+		}
+		owner, err := h.ghClient.ResolveOwner(ctx)
+		if err != nil {
+			return fmt.Sprintf("Error resolving owner: %v", err)
+		}
+		baseBranch := args.Branch
+		if baseBranch == "" {
+			baseBranch, err = h.ghClient.GetDefaultBranch(ctx, owner, args.Repo)
+			if err != nil {
+				return fmt.Sprintf("Error getting default branch: %v", err)
+			}
+		}
+		_, fileSHA, err := h.ghClient.GetFileContent(ctx, owner, args.Repo, args.Path, baseBranch)
+		if err != nil {
+			return fmt.Sprintf("Error reading current file for SHA: %v", err)
+		}
+		branchName := github.GenerateBranchName("ovad")
+		if err := h.ghClient.CreateBranch(ctx, owner, args.Repo, baseBranch, branchName); err != nil {
+			return fmt.Sprintf("Error creating branch: %v", err)
+		}
+		commitMsg := fmt.Sprintf("ovad: %s", args.Description)
+		if err := h.ghClient.UpdateFile(ctx, owner, args.Repo, args.Path, branchName, commitMsg, []byte(args.NewContent), fileSHA); err != nil {
+			return fmt.Sprintf("Error committing file: %v", err)
+		}
+		prTitle := fmt.Sprintf("ovad: %s", args.Description)
+		prBody := fmt.Sprintf("Automated change requested via Slack by <@%s>.\n\nChange: %s", userID, args.Description)
+		prURL, err := h.ghClient.CreatePullRequest(ctx, owner, args.Repo, baseBranch, branchName, prTitle, prBody)
+		if err != nil {
+			return fmt.Sprintf("Changes committed to branch %s but PR creation failed: %v", branchName, err)
+		}
+		log.Printf("[user=%s channel=%s] PR created via modify_file: %s", userID, channelID, prURL)
+		return fmt.Sprintf("Pull request created: %s", prURL)
 
 	default:
 		return fmt.Sprintf("Unknown tool: %s", name)

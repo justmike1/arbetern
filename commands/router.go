@@ -1,13 +1,11 @@
 package commands
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"strings"
 
 	"github.com/justmike1/ovad/github"
-	"github.com/justmike1/ovad/prompts"
 	ovadslack "github.com/justmike1/ovad/slack"
 )
 
@@ -62,20 +60,10 @@ func (r *Router) Handle(channelID, userID, text, responseURL string) {
 		}
 		handler.Execute(channelID, userID, text, responseURL)
 
-	case isFileModIntent(lower):
-		log.Printf("[user=%s channel=%s] routed to: filemod", userID, channelID)
-		handler := &FileModHandler{
-			slackClient:     r.slackClient,
-			ghClient:        r.ghClient,
-			modelsClient:    r.modelsClient,
-			contextProvider: r.contextProvider,
-			memory:          r.memory,
-		}
-		handler.Execute(channelID, userID, text, responseURL)
-
 	default:
-		log.Printf("[user=%s channel=%s] routed to: LLM classification", userID, channelID)
-		r.handleAmbiguous(channelID, userID, text, responseURL)
+		log.Printf("[user=%s channel=%s] routed to: general handler", userID, channelID)
+		handler := &GeneralHandler{ghClient: r.ghClient, modelsClient: r.modelsClient, contextProvider: r.contextProvider, memory: r.memory}
+		handler.Execute(channelID, userID, text, responseURL)
 	}
 }
 
@@ -89,57 +77,8 @@ func isDebugIntent(text string) bool {
 	return false
 }
 
-func isFileModIntent(text string) bool {
-	modKeywords := []string{"add env", "modify", "update file", "change file", "edit file", "add variable"}
-	for _, kw := range modKeywords {
-		if strings.Contains(text, kw) {
-			return true
-		}
-	}
-	return false
-}
-
-func (r *Router) handleAmbiguous(channelID, userID, text, responseURL string) {
-	ctx := contextBackground()
-
-	systemPrompt := prompts.MustGet("classifier")
-	history := r.memory.GetHistory(channelID, userID)
-
-	classifyInput := text
-	if history != "" {
-		classifyInput = fmt.Sprintf("Previous conversation:\n%s\n\nCurrent message: %s", history, text)
-	}
-
-	result, err := r.modelsClient.Complete(ctx, systemPrompt, classifyInput)
-	if err != nil {
-		log.Printf("[user=%s channel=%s] failed to classify intent via LLM: %v", userID, channelID, err)
-		r.replyError(responseURL, "I couldn't understand your request. Try: `/ovad debug the latest message` or `/ovad add env var KEY=VALUE in file.tf in my-repo repository`")
-		return
-	}
-
-	classification := strings.TrimSpace(strings.ToLower(result))
-	log.Printf("[user=%s channel=%s] LLM classified intent as: %s", userID, channelID, classification)
-
-	switch {
-	case strings.Contains(classification, "debug"):
-		handler := &DebugHandler{slackClient: r.slackClient, ghClient: r.ghClient, modelsClient: r.modelsClient, contextProvider: r.contextProvider, memory: r.memory}
-		handler.Execute(channelID, userID, text, responseURL)
-	case strings.Contains(classification, "filemod"):
-		handler := &FileModHandler{slackClient: r.slackClient, ghClient: r.ghClient, modelsClient: r.modelsClient, contextProvider: r.contextProvider, memory: r.memory}
-		handler.Execute(channelID, userID, text, responseURL)
-	default:
-		log.Printf("[user=%s channel=%s] routed to: general handler", userID, channelID)
-		handler := &GeneralHandler{ghClient: r.ghClient, modelsClient: r.modelsClient, contextProvider: r.contextProvider, memory: r.memory}
-		handler.Execute(channelID, userID, text, responseURL)
-	}
-}
-
 func (r *Router) replyError(responseURL, msg string) {
 	if err := ovadslack.RespondToURL(responseURL, msg, true); err != nil {
 		log.Printf("failed to send error to user: %v", err)
 	}
-}
-
-func contextBackground() context.Context {
-	return context.Background()
 }
