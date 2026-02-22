@@ -7,14 +7,22 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 )
 
 const modelsAPIURL = "https://models.github.ai/inference/chat/completions"
+
+// azureAPIVersion is the Azure OpenAI REST API version to use.
+const azureAPIVersion = "2024-10-21"
 
 type ModelsClient struct {
 	token      string
 	model      string
 	httpClient *http.Client
+
+	// Azure OpenAI fields (empty when using GitHub Models).
+	azureEndpoint string
+	azureAPIKey   string
 }
 
 type chatRequest struct {
@@ -71,6 +79,28 @@ func NewModelsClient(token, model string) *ModelsClient {
 	}
 }
 
+// NewAzureModelsClient creates a ModelsClient backed by Azure OpenAI.
+// The deployment parameter is used as the model/deployment name in the URL.
+func NewAzureModelsClient(endpoint, apiKey, deployment string) *ModelsClient {
+	endpoint = strings.TrimRight(endpoint, "/")
+	return &ModelsClient{
+		model:         deployment,
+		httpClient:    &http.Client{},
+		azureEndpoint: endpoint,
+		azureAPIKey:   apiKey,
+	}
+}
+
+// useAzure returns true when the client is configured for Azure OpenAI.
+func (m *ModelsClient) useAzure() bool {
+	return m.azureEndpoint != "" && m.azureAPIKey != ""
+}
+
+// Model returns the model/deployment name this client is using.
+func (m *ModelsClient) Model() string {
+	return m.model
+}
+
 func (m *ModelsClient) Complete(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
 	messages := []ChatMessage{
 		{Role: "system", Content: systemPrompt},
@@ -102,17 +132,29 @@ func (m *ModelsClient) doChat(ctx context.Context, messages []ChatMessage, tools
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, modelsAPIURL, bytes.NewReader(payload))
+	var apiURL string
+	if m.useAzure() {
+		apiURL = fmt.Sprintf("%s/openai/deployments/%s/chat/completions?api-version=%s",
+			m.azureEndpoint, m.model, azureAPIVersion)
+	} else {
+		apiURL = modelsAPIURL
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(payload))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+m.token)
+	if m.useAzure() {
+		req.Header.Set("api-key", m.azureAPIKey)
+	} else {
+		req.Header.Set("Authorization", "Bearer "+m.token)
+	}
 
 	resp, err := m.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("request to GitHub Models failed: %w", err)
+		return nil, fmt.Errorf("LLM API request failed: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -122,7 +164,7 @@ func (m *ModelsClient) doChat(ctx context.Context, messages []ChatMessage, tools
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GitHub Models API returned %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("LLM API returned %d: %s", resp.StatusCode, string(body))
 	}
 
 	var chatResp ChatResponse
@@ -131,7 +173,7 @@ func (m *ModelsClient) doChat(ctx context.Context, messages []ChatMessage, tools
 	}
 
 	if chatResp.Error != nil {
-		return nil, fmt.Errorf("GitHub Models error: %s", chatResp.Error.Message)
+		return nil, fmt.Errorf("LLM API error: %s", chatResp.Error.Message)
 	}
 
 	return &chatResp, nil

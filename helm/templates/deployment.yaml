@@ -64,6 +64,18 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.secretName }}
                   key: github-token
+            {{- if index .Values.secretValues "azure-openai-endpoint" }}
+            - name: AZURE_OPEN_AI_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secretName }}
+                  key: azure-openai-endpoint
+            - name: AZURE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secretName }}
+                  key: azure-api-key
+            {{- end }}
           {{- with .Values.livenessProbe }}
           livenessProbe:
             {{- toYaml . | nindent 12 }}

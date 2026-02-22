@@ -32,6 +32,7 @@ func (h *GeneralHandler) Execute(channelID, userID, text, responseURL string) {
 	}
 
 	systemMsg := h.systemPrompt()
+	systemMsg = strings.Replace(systemMsg, "{{MODEL}}", h.modelsClient.Model(), 1)
 	history := h.memory.GetHistory(channelID, userID)
 	if history != "" {
 		systemMsg += fmt.Sprintf("\n\nPrevious conversation with this user:\n%s", history)

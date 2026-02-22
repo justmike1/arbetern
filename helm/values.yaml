@@ -42,6 +42,9 @@ secretValues:
   slack-bot-token: "xoxb-EXAMPLE-TOKEN"
   slack-signing-secret: "EXAMPLE-SIGNING-SECRET"
   github-token: "ghp_EXAMPLE-GITHUB-TOKEN"
+  # Azure OpenAI credentials (optional – when set the app uses Azure instead of GitHub Models)
+  azure-openai-endpoint: ""
+  azure-api-key: ""
 
 service:
   type: ClusterIP

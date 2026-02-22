@@ -22,8 +22,20 @@ func main() {
 	}
 
 	slackClient := ovadslack.NewClient(cfg.SlackBotToken)
-	ghClient := github.NewClient(cfg.GitHubToken)
-	modelsClient := github.NewModelsClient(cfg.GitHubToken, cfg.GitHubModel)
+
+	var ghClient *github.Client
+	if cfg.GitHubToken != "" {
+		ghClient = github.NewClient(cfg.GitHubToken)
+	}
+
+	var modelsClient *github.ModelsClient
+	if cfg.UseAzure() {
+		modelsClient = github.NewAzureModelsClient(cfg.AzureEndpoint, cfg.AzureAPIKey, cfg.GitHubModel)
+		log.Printf("Using Azure OpenAI backend: %s (deployment: %s)", cfg.AzureEndpoint, cfg.GitHubModel)
+	} else {
+		modelsClient = github.NewModelsClient(cfg.GitHubToken, cfg.GitHubModel)
+		log.Printf("Using GitHub Models backend (model: %s)", cfg.GitHubModel)
+	}
 
 	router := commands.NewRouter(slackClient, ghClient, modelsClient)
 	handler := ovadslack.NewHandler(cfg.SlackSigningSecret, router.Handle)
@@ -33,7 +45,7 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	log.Printf("ovad server starting on :%s using model %s", cfg.Port, cfg.GitHubModel)
+	log.Printf("ovad server starting on :%s", cfg.Port)
 	if err := http.ListenAndServe(":"+cfg.Port, nil); err != nil {
 		log.Fatalf("server failed: %v", err)
 	}
