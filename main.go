@@ -3,6 +3,7 @@ package main
 import (
 	"embed"
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"log"
 	"net/http"
@@ -63,25 +64,13 @@ func main() {
 		http.NotFound(w, r)
 	})
 
-	// API: list agents with their prompts (read-only).
+	// API: list agents with their prompts (read-only, discovered from agents/ directory).
 	http.HandleFunc("/api/agents", func(w http.ResponseWriter, r *http.Request) {
-		type agent struct {
-			ID         string            `json:"id"`
-			Name       string            `json:"name"`
-			Profession string            `json:"profession"`
-			Prompts    map[string]string `json:"prompts"`
+		agents, err := prompts.DiscoverAgents("")
+		if err != nil {
+			http.Error(w, fmt.Sprintf("failed to discover agents: %v", err), http.StatusInternalServerError)
+			return
 		}
-
-		allPrompts := prompts.GetAll()
-		agents := []agent{
-			{
-				ID:         "ovad",
-				Name:       "ovad",
-				Profession: "DevOps & SRE Engineer",
-				Prompts:    allPrompts,
-			},
-		}
-
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(agents)
 	})
@@ -90,13 +79,13 @@ func main() {
 	http.HandleFunc("/api/settings", func(w http.ResponseWriter, r *http.Request) {
 		headerTitle := os.Getenv("UI_HEADER")
 		if headerTitle == "" {
-			headerTitle = "ovad"
+			headerTitle = "arbetern"
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]string{"header": headerTitle})
 	})
 
-	log.Printf("ovad server starting on :%s", cfg.Port)
+	log.Printf("arbetern server starting on :%s", cfg.Port)
 	if err := http.ListenAndServe(":"+cfg.Port, nil); err != nil {
 		log.Fatalf("server failed: %v", err)
 	}

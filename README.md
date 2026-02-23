@@ -1,23 +1,23 @@
-# ovad
+# arbetern
 
-Slack bot that integrates with GitHub Models API. Analyses channel messages, modifies files via PRs, and answers general DevOps questions using an LLM agent with tool calling.
+*Yiddish for "workers."*
 
-## Commands
+An orchestration platform for AI agents in the enterprise. Each agent lives in its own directory under `agents/`, with dedicated prompts and a defined professional scope. Arbetern provides the runtime, routing, UI, and integrations — agents bring the expertise.
 
-```
-/ovad debug the latest messages              # analyze recent channel alerts
-/ovad add env var DB=prod in main.tf in repo  # modify a file and open a PR
-/ovad list all repositories                   # general query (LLM decides how)
-```
+## Current Agents
 
-## Setup
+| Agent | Profession | Description |
+|---|---|---|
+| **ovad** | DevOps & SRE Engineer | Debugs CI/CD failures, reads/modifies repo files, opens PRs — all from a Slack slash command |
+
+## Quick Start
 
 ### Prerequisites
 
 - Go 1.25+
 - A Slack app with a slash command pointing to `/webhook` (see [docs/SLACK_BOT.md](docs/SLACK_BOT.md))
-- A GitHub PAT with repo access
-- (Optional) GitHub Models API access for non-default models
+- A GitHub PAT with repo access (see [docs/GITHUB_PAT.md](docs/GITHUB_PAT.md))
+- (Optional) Azure OpenAI credentials for LLM inference
 
 ### Environment Variables
 
@@ -25,10 +25,14 @@ Slack bot that integrates with GitHub Models API. Analyses channel messages, mod
 |---|---|---|
 | `SLACK_BOT_TOKEN` | yes | Slack bot OAuth token (`xoxb-...`) |
 | `SLACK_SIGNING_SECRET` | yes | Slack app signing secret |
-| `GITHUB_TOKEN` | yes | GitHub PAT |
+| `GITHUB_TOKEN` | yes* | GitHub PAT (*or* use Azure OpenAI) |
 | `GITHUB_MODEL` | no | Model ID (default: `openai/gpt-4o`) |
+| `AZURE_OPEN_AI_ENDPOINT` | no | Azure OpenAI endpoint URL |
+| `AZURE_API_KEY` | no | Azure OpenAI API key |
 | `PORT` | no | HTTP port (default: `8080`) |
-| `PROMPTS_FILE` | no | Path to prompts YAML (default: `prompts.yaml`) |
+| `PROMPTS_FILE` | no | Path to prompts YAML (default: `agents/ovad/prompts.yaml`) |
+| `AGENTS_DIR` | no | Path to agents directory (default: `agents`) |
+| `UI_HEADER` | no | Custom header text for the web UI (default: `arbetern`) |
 
 ### Run Locally
 
@@ -42,30 +46,51 @@ go run .
 ### Docker
 
 ```bash
-docker build -t ovad .
-docker run -e SLACK_BOT_TOKEN -e SLACK_SIGNING_SECRET -e GITHUB_TOKEN ovad
+docker build -t arbetern .
+docker run -e SLACK_BOT_TOKEN -e SLACK_SIGNING_SECRET -e GITHUB_TOKEN arbetern
 ```
 
 ### Helm
 
 ```bash
-helm upgrade --install ovad ./helm -f deploy.local.values.yaml
+helm upgrade --install arbetern ./helm -f deploy.local.values.yaml
 ```
+
+## Web UI
+
+Visit `/ui/` to see all registered agents. Click an agent card to view its prompts (read-only). The UI auto-discovers agents from the `agents/` directory.
+
+- Drop a `logo.png` into `ui/` to replace the default icon
+- Set `UI_HEADER` env var to customize the navbar title
+
+## Adding a New Agent
+
+1. Create a directory under `agents/`:
+   ```
+   agents/my-agent/prompts.yaml
+   ```
+2. Define prompts in the YAML file (keys like `security`, `classifier`, `general`, `debug`, etc.)
+3. Rebuild and deploy — the agent will appear in the UI automatically
+
+> **Note:** Currently only the **ovad** agent has full runtime integration (Slack routing, tool calling). The multi-agent runtime is the next feature milestone — the `agents/` structure and UI discovery are the foundation for it.
 
 ## Project Structure
 
 ```
-main.go           # entrypoint, HTTP server
-prompts.yaml      # externalized system prompts
-config/           # env var loading
-commands/         # intent routing, debug/filemod/general handlers
-github/           # GitHub API client + Models API client
-slack/            # Slack webhook handler + response helpers
-prompts/          # YAML prompt loader
-helm/             # Helm chart
-docs/             # Slack bot setup guide
+main.go              # entrypoint, HTTP server, API
+agents/              # agent definitions (one directory per agent)
+  ovad/
+    prompts.yaml     # ovad system prompts
+config/              # env var loading
+commands/            # intent routing, debug/general handlers
+github/              # GitHub API client + Models/Azure API client
+slack/               # Slack webhook handler + response helpers
+prompts/             # YAML prompt loader + agent discovery
+ui/                  # embedded web UI (agent manager)
+helm/                # Helm chart
+docs/                # setup guides (Slack, GitHub PAT)
 ```
 
 ## Customizing Prompts
 
-Edit `prompts.yaml` to change LLM behavior without recompiling. Keys: `classifier`, `debug`, `filemod`, `filemod_parser`, `general`.
+Edit `agents/ovad/prompts.yaml` to change LLM behavior without recompiling. Keys: `intro`, `security`, `classifier`, `debug`, `general`.

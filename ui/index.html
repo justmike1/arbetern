@@ -443,6 +443,14 @@
       return AGENT_COLORS[Math.abs(hash) % AGENT_COLORS.length];
     }
 
+    function getAgentProfession(agent) {
+      // Try to extract profession from the general or security prompt's first meaningful line.
+      const general = (agent.prompts || {}).general || '';
+      const match = general.match(/You are (?:a |an )?([^.\n]+)/i);
+      if (match) return match[1].trim();
+      return agent.id;
+    }
+
     function renderAgents(agents) {
       const grid = document.getElementById('agents-grid');
       const countBadge = document.getElementById('agent-count');
@@ -467,7 +475,7 @@
               <div class="agent-avatar" style="background:${color}">${initial}</div>
               <div class="agent-info">
                 <div class="agent-name">${escapeHtml(agent.name)}</div>
-                <div class="agent-profession">${escapeHtml(agent.profession)}</div>
+                <div class="agent-profession">${escapeHtml(getAgentProfession(agent))}</div>
               </div>
             </div>
             <div class="agent-status"><span class="status-dot"></span> Active</div>
@@ -488,7 +496,7 @@
       document.getElementById('modal-avatar').style.background = color;
       document.getElementById('modal-avatar').textContent = initial;
       document.getElementById('modal-title').textContent = agent.name;
-      document.getElementById('modal-subtitle').textContent = agent.profession;
+      document.getElementById('modal-subtitle').textContent = getAgentProfession(agent);
 
       const body = document.getElementById('modal-body');
       const prompts = agent.prompts || {};

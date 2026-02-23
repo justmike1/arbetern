@@ -13,6 +13,6 @@ FROM gcr.io/distroless/static:nonroot
 WORKDIR /app
 
 COPY --from=builder /ovad /app/ovad
-COPY prompts.yaml /app/prompts.yaml
+COPY agents/ /app/agents/
 
 ENTRYPOINT ["/app/ovad"]
