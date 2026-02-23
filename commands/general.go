@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/justmike1/ovad/github"
-	"github.com/justmike1/ovad/prompts"
 	ovadslack "github.com/justmike1/ovad/slack"
 )
 
@@ -19,6 +18,7 @@ type GeneralHandler struct {
 	modelsClient    *github.ModelsClient
 	contextProvider *ContextProvider
 	memory          *ConversationMemory
+	prompts         PromptProvider
 }
 
 func (h *GeneralHandler) Execute(channelID, userID, text, responseURL string) {
@@ -88,7 +88,7 @@ func (h *GeneralHandler) Execute(channelID, userID, text, responseURL string) {
 }
 
 func (h *GeneralHandler) systemPrompt() string {
-	return prompts.MustGet("security") + "\n\n" + prompts.MustGet("general")
+	return h.prompts.MustGet("security") + "\n\n" + h.prompts.MustGet("general")
 }
 
 func (h *GeneralHandler) buildTools() []github.Tool {

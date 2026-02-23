@@ -25,10 +25,6 @@ func main() {
 		log.Fatalf("configuration error: %v", err)
 	}
 
-	if err := prompts.Load(""); err != nil {
-		log.Fatalf("failed to load prompts: %v", err)
-	}
-
 	slackClient := ovadslack.NewClient(cfg.SlackBotToken)
 
 	var ghClient *github.Client
@@ -45,10 +41,29 @@ func main() {
 		log.Printf("Using GitHub Models backend (model: %s)", cfg.GitHubModel)
 	}
 
-	router := commands.NewRouter(slackClient, ghClient, modelsClient)
-	handler := ovadslack.NewHandler(cfg.SlackSigningSecret, router.Handle)
+	// Discover agents and register per-agent webhook routes (/<agent>/webhook).
+	agents, err := prompts.DiscoverAgents("")
+	if err != nil {
+		log.Fatalf("failed to discover agents: %v", err)
+	}
+	if len(agents) == 0 {
+		log.Fatal("no agents found in agents/ directory")
+	}
 
-	http.Handle("/webhook", handler)
+	for _, agent := range agents {
+		ap, err := prompts.LoadAgent(agent.ID)
+		if err != nil {
+			log.Fatalf("failed to load prompts for agent %s: %v", agent.ID, err)
+		}
+
+		router := commands.NewRouter(slackClient, ghClient, modelsClient, ap, agent.ID)
+		handler := ovadslack.NewHandler(cfg.SlackSigningSecret, router.Handle)
+
+		webhookPath := fmt.Sprintf("/%s/webhook", agent.ID)
+		http.Handle(webhookPath, handler)
+		log.Printf("Registered agent %q at %s", agent.ID, webhookPath)
+	}
+
 	http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})

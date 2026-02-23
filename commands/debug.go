@@ -6,7 +6,6 @@ import (
 	"log"
 
 	"github.com/justmike1/ovad/github"
-	"github.com/justmike1/ovad/prompts"
 	ovadslack "github.com/justmike1/ovad/slack"
 )
 
@@ -18,6 +17,7 @@ type DebugHandler struct {
 	modelsClient    *github.ModelsClient
 	contextProvider *ContextProvider
 	memory          *ConversationMemory
+	prompts         PromptProvider
 }
 
 func (h *DebugHandler) Execute(channelID, userID, text, responseURL string) {
@@ -37,7 +37,7 @@ func (h *DebugHandler) Execute(channelID, userID, text, responseURL string) {
 
 	workflowLogs := h.fetchWorkflowLogs(ctx, channelContext+"\n"+text, userID, channelID)
 
-	systemPrompt := prompts.MustGet("security") + "\n\n" + prompts.MustGet("debug")
+	systemPrompt := h.prompts.MustGet("security") + "\n\n" + h.prompts.MustGet("debug")
 
 	userPrompt := fmt.Sprintf("Here are the recent messages from the channel:\n\n%s\n\nUser request: %s", channelContext, text)
 	if workflowLogs != "" {

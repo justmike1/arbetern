@@ -55,7 +55,7 @@ ingress:
   className: ""
   annotations: {}
   hosts:
-    - host: arbetern.example.local
+    - host: ai.example.local
       paths:
         - path: /
           pathType: ImplementationSpecific
@@ -68,7 +68,7 @@ httpRoute:
     - name: gateway
       sectionName: http
   hostnames:
-    - arbetern.example.local
+    - ai.example.local
   rules:
     - matches:
         - path:

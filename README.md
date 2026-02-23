@@ -15,7 +15,7 @@ An orchestration platform for AI agents in the enterprise. Each agent lives in i
 ### Prerequisites
 
 - Go 1.25+
-- A Slack app with a slash command pointing to `/webhook` (see [docs/SLACK_BOT.md](docs/SLACK_BOT.md))
+- A Slack app with a slash command pointing to `/<agent>/webhook` (see [docs/SLACK_BOT.md](docs/SLACK_BOT.md))
 - A GitHub PAT with repo access (see [docs/GITHUB_PAT.md](docs/GITHUB_PAT.md))
 - (Optional) Azure OpenAI credentials for LLM inference
 
@@ -30,7 +30,7 @@ An orchestration platform for AI agents in the enterprise. Each agent lives in i
 | `AZURE_OPEN_AI_ENDPOINT` | no | Azure OpenAI endpoint URL |
 | `AZURE_API_KEY` | no | Azure OpenAI API key |
 | `PORT` | no | HTTP port (default: `8080`) |
-| `PROMPTS_FILE` | no | Path to prompts YAML (default: `agents/ovad/prompts.yaml`) |
+| `PROMPTS_FILE` | no | Path to prompts YAML (default: per-agent `agents/<name>/prompts.yaml`) |
 | `AGENTS_DIR` | no | Path to agents directory (default: `agents`) |
 | `UI_HEADER` | no | Custom header text for the web UI (default: `arbetern`) |
 
@@ -70,9 +70,10 @@ Visit `/ui/` to see all registered agents. Click an agent card to view its promp
    agents/my-agent/prompts.yaml
    ```
 2. Define prompts in the YAML file (keys like `security`, `classifier`, `general`, `debug`, etc.)
-3. Rebuild and deploy — the agent will appear in the UI automatically
+3. Rebuild and deploy — the agent will appear in the UI and get a webhook at `/<agent-name>/webhook`
+4. Create a Slack slash command pointing to `https://<your-host>/<agent-name>/webhook`
 
-> **Note:** Currently only the **ovad** agent has full runtime integration (Slack routing, tool calling). The multi-agent runtime is the next feature milestone — the `agents/` structure and UI discovery are the foundation for it.
+> **Note:** Each agent directory under `agents/` is automatically discovered at startup and registered with its own webhook route (`/<agent>/webhook`). Create a Slack slash command per agent pointing to the corresponding path.
 
 ## Project Structure
 

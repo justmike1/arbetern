@@ -11,6 +11,8 @@ import (
 
 const defaultPath = "agents/ovad/prompts.yaml"
 const defaultAgentsDir = "agents"
+const globalPromptsFile = "prompts.yaml"
+const agentConfigFile = "config.yaml"
 
 var store map[string]string
 
@@ -19,6 +21,102 @@ type AgentConfig struct {
 	ID      string            `json:"id"`
 	Name    string            `json:"name"`
 	Prompts map[string]string `json:"prompts"`
+}
+
+// agentMeta is the on-disk config.yaml structure for an agent.
+type agentMeta struct {
+	Name string `yaml:"name"`
+}
+
+// AgentPrompts holds a per-agent prompt store with Get/MustGet methods.
+type AgentPrompts struct {
+	agentID string
+	store   map[string]string
+}
+
+// loadGlobalPrompts reads the global prompts.yaml from the agents root directory.
+func loadGlobalPrompts(agentsDir string) (map[string]string, error) {
+	path := filepath.Join(agentsDir, globalPromptsFile)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil // no global prompts — not an error
+		}
+		return nil, fmt.Errorf("failed to read global prompts: %w", err)
+	}
+	parsed := make(map[string]string)
+	if err := yaml.Unmarshal(data, &parsed); err != nil {
+		return nil, fmt.Errorf("failed to parse global prompts: %w", err)
+	}
+	return parsed, nil
+}
+
+// LoadAgent reads the prompts.yaml for the given agent and returns an AgentPrompts.
+// Global prompts from agents/prompts.yaml are loaded first; agent-specific prompts override them.
+func LoadAgent(agentID string) (*AgentPrompts, error) {
+	agentsDir := os.Getenv("AGENTS_DIR")
+	if agentsDir == "" {
+		agentsDir = defaultAgentsDir
+	}
+
+	// Start with global prompts as the base.
+	merged, err := loadGlobalPrompts(agentsDir)
+	if err != nil {
+		return nil, err
+	}
+	if merged == nil {
+		merged = make(map[string]string)
+	}
+
+	// Layer agent-specific prompts on top (overrides globals).
+	path := filepath.Join(agentsDir, agentID, "prompts.yaml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read prompts for agent %s: %w", agentID, err)
+	}
+	parsed := make(map[string]string)
+	if err := yaml.Unmarshal(data, &parsed); err != nil {
+		return nil, fmt.Errorf("failed to parse prompts for agent %s: %w", agentID, err)
+	}
+	for k, v := range parsed {
+		merged[k] = v
+	}
+
+	return &AgentPrompts{agentID: agentID, store: merged}, nil
+}
+
+// Get returns the prompt for the given key, or empty string if not found.
+func (ap *AgentPrompts) Get(key string) string {
+	if ap == nil || ap.store == nil {
+		return ""
+	}
+	return ap.store[key]
+}
+
+// MustGet returns the prompt for the given key or panics if not found.
+func (ap *AgentPrompts) MustGet(key string) string {
+	val := ap.Get(key)
+	if val == "" {
+		panic(fmt.Sprintf("prompt %q not found for agent %s", key, ap.agentID))
+	}
+	return val
+}
+
+// GetAll returns a copy of all prompts in this agent store.
+func (ap *AgentPrompts) GetAll() map[string]string {
+	if ap == nil || ap.store == nil {
+		return nil
+	}
+	cp := make(map[string]string, len(ap.store))
+	for k, v := range ap.store {
+		cp[k] = v
+	}
+	return cp
+}
+
+// ID returns the agent identifier.
+func (ap *AgentPrompts) ID() string {
+	return ap.agentID
 }
 
 func Load(path string) error {
@@ -58,8 +156,8 @@ func MustGet(key string) string {
 	return val
 }
 
-// GetAll returns a copy of all loaded prompts.
-func GetAll() map[string]string {
+// GetAllGlobal returns a copy of all loaded prompts from the global store.
+func GetAllGlobal() map[string]string {
 	if store == nil {
 		return nil
 	}
@@ -72,12 +170,19 @@ func GetAll() map[string]string {
 
 // DiscoverAgents scans the agents directory and returns all agent configs.
 // Each subdirectory under agentsDir is treated as an agent, with a prompts.yaml inside.
+// Global prompts from agents/prompts.yaml are merged as a base for each agent.
+// An optional config.yaml in the agent directory can set a custom display name.
 func DiscoverAgents(agentsDir string) ([]AgentConfig, error) {
 	if agentsDir == "" {
 		agentsDir = os.Getenv("AGENTS_DIR")
 	}
 	if agentsDir == "" {
 		agentsDir = defaultAgentsDir
+	}
+
+	globalPrompts, err := loadGlobalPrompts(agentsDir)
+	if err != nil {
+		return nil, err
 	}
 
 	entries, err := os.ReadDir(agentsDir)
@@ -101,14 +206,31 @@ func DiscoverAgents(agentsDir string) ([]AgentConfig, error) {
 			continue
 		}
 
+		// Merge: global prompts as base, agent-specific on top.
+		merged := make(map[string]string, len(globalPrompts)+len(parsed))
+		for k, v := range globalPrompts {
+			merged[k] = v
+		}
+		for k, v := range parsed {
+			merged[k] = v
+		}
+
 		name := entry.Name()
-		// Derive a display name: capitalize first letter.
 		displayName := strings.ToUpper(name[:1]) + name[1:]
+
+		// Check for config.yaml with a custom display name.
+		configPath := filepath.Join(agentsDir, entry.Name(), agentConfigFile)
+		if cfgData, err := os.ReadFile(configPath); err == nil {
+			var meta agentMeta
+			if err := yaml.Unmarshal(cfgData, &meta); err == nil && meta.Name != "" {
+				displayName = meta.Name
+			}
+		}
 
 		agents = append(agents, AgentConfig{
 			ID:      name,
 			Name:    displayName,
-			Prompts: parsed,
+			Prompts: merged,
 		})
 	}
 

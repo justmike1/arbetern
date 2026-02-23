@@ -3,13 +3,13 @@
 ## Prerequisites
 
 - A Slack workspace where you have admin permissions
-- A public URL where the OVAD server will be deployed (e.g., `https://ovad.example.com`). You will configure and deploy the server in Step 6 after obtaining the Slack credentials.
+- A public URL where the arbetern server will be deployed (e.g., `https://ai.example.com`). You will configure and deploy the server in Step 6 after obtaining the Slack credentials.
 
 ## Step 1: Create a Slack App
 
 1. Go to https://api.slack.com/apps
 2. Click **Create New App** > **From scratch**
-3. Set the app name to `ovad`
+3. Set the app name (e.g. `ovad` for the ovad agent)
 4. Select your workspace
 5. Click **Create App**
 
@@ -30,11 +30,13 @@
 1. In the left sidebar, go to **Slash Commands**
 2. Click **Create New Command**
 3. Fill in:
-   - **Command:** `/ovad`
-   - **Request URL:** `https://<your-server>/webhook`
+   - **Command:** `/ovad` (or whatever you want the agent's slash command to be)
+   - **Request URL:** `https://<your-server>/<agent-name>/webhook` (e.g. `https://ai.example.com/ovad/webhook`)
    - **Short Description:** `AI-powered DevOps assistant`
    - **Usage Hint:** `[debug latest message | add env var KEY=VALUE in file.tf in repo-name repository]`
 4. Click **Save**
+
+> **Multi-agent setup:** Create a separate Slack app (or slash command) for each agent, each pointing to its own `/<agent>/webhook` path.
 
 ## Step 4: Install the App to Your Workspace
 
@@ -49,9 +51,9 @@
 2. Under **App Credentials**, find **Signing Secret**
 3. Click **Show** and copy the value
 
-## Step 6: Configure OVAD Environment Variables
+## Step 6: Configure Arbetern Environment Variables
 
-Set these environment variables on the server running OVAD:
+Set these environment variables on the server running arbetern:
 
 ```
 SLACK_BOT_TOKEN=xoxb-your-bot-token
@@ -63,17 +65,17 @@ PORT=8080
 
 ## Step 7: Invite the Bot to Channels
 
-In each Slack channel where you want to use OVAD, run:
+In each Slack channel where you want to use an agent, run:
 
 ```
-/invite @ovad
+/invite @<bot-name>
 ```
 
 The bot needs to be present in a channel to read its message history.
 
 ## Usage
 
-Once configured, use the `/ovad` command in any channel the bot has been invited to:
+Once configured, use the agent's slash command in any channel the bot has been invited to:
 
 ```
 /ovad please debug the latest message in this channel
@@ -89,7 +91,7 @@ Once configured, use the `/ovad` command in any channel the bot has been invited
 - The server is unreachable from Slack. Verify the Request URL is correct and the server is running.
 
 **"not_in_channel" error in logs**
-- Run `/invite @ovad` in the channel.
+- Run `/invite @<bot-name>` in the channel.
 
 **"invalid_auth" error in logs**
 - The `SLACK_BOT_TOKEN` is wrong or expired. Reinstall the app and copy the new token.

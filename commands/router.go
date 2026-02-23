@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/justmike1/ovad/github"
-	"github.com/justmike1/ovad/prompts"
 	ovadslack "github.com/justmike1/ovad/slack"
 )
 
@@ -16,15 +15,19 @@ type Router struct {
 	modelsClient    *github.ModelsClient
 	contextProvider *ContextProvider
 	memory          *ConversationMemory
+	prompts         PromptProvider
+	agentID         string
 }
 
-func NewRouter(slackClient SlackClient, ghClient *github.Client, modelsClient *github.ModelsClient) *Router {
+func NewRouter(slackClient SlackClient, ghClient *github.Client, modelsClient *github.ModelsClient, pp PromptProvider, agentID string) *Router {
 	return &Router{
 		slackClient:     slackClient,
 		ghClient:        ghClient,
 		modelsClient:    modelsClient,
 		contextProvider: NewContextProvider(slackClient),
 		memory:          NewConversationMemory(),
+		prompts:         pp,
+		agentID:         agentID,
 	}
 }
 
@@ -36,11 +39,11 @@ func (r *Router) Handle(channelID, userID, text, responseURL string) {
 		return
 	}
 
-	log.Printf("[user=%s channel=%s] received command: %s", userID, channelID, text)
+	log.Printf("[agent=%s user=%s channel=%s] received command: %s", r.agentID, userID, channelID, text)
 
-	auditMsg := fmt.Sprintf(":mag: <@%s> requested in <#%s>:\n> %s", userID, channelID, text)
+	auditMsg := fmt.Sprintf(":mag: <@%s> requested in <#%s> (agent: %s):\n> %s", userID, channelID, r.agentID, text)
 	if err := r.slackClient.PostMessage(channelID, auditMsg); err != nil {
-		log.Printf("[user=%s channel=%s] failed to post audit message: %v", userID, channelID, err)
+		log.Printf("[agent=%s user=%s channel=%s] failed to post audit message: %v", r.agentID, userID, channelID, err)
 	}
 
 	_ = ovadslack.RespondToURL(responseURL, fmt.Sprintf("Processing request: _%s_", text), true)
@@ -52,7 +55,7 @@ func (r *Router) Handle(channelID, userID, text, responseURL string) {
 	switch {
 	case isIntroIntent(lower):
 		log.Printf("[user=%s channel=%s] routed to: intro", userID, channelID)
-		_ = ovadslack.RespondToURL(responseURL, prompts.MustGet("intro"), false)
+		_ = ovadslack.RespondToURL(responseURL, r.prompts.MustGet("intro"), false)
 		return
 
 	case isDebugIntent(lower):
@@ -63,12 +66,13 @@ func (r *Router) Handle(channelID, userID, text, responseURL string) {
 			modelsClient:    r.modelsClient,
 			contextProvider: r.contextProvider,
 			memory:          r.memory,
+			prompts:         r.prompts,
 		}
 		handler.Execute(channelID, userID, text, responseURL)
 
 	default:
 		log.Printf("[user=%s channel=%s] routed to: general handler", userID, channelID)
-		handler := &GeneralHandler{ghClient: r.ghClient, modelsClient: r.modelsClient, contextProvider: r.contextProvider, memory: r.memory}
+		handler := &GeneralHandler{ghClient: r.ghClient, modelsClient: r.modelsClient, contextProvider: r.contextProvider, memory: r.memory, prompts: r.prompts}
 		handler.Execute(channelID, userID, text, responseURL)
 	}
 }
