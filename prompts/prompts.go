@@ -47,3 +47,15 @@ func MustGet(key string) string {
 	}
 	return val
 }
+
+// GetAll returns a copy of all loaded prompts.
+func GetAll() map[string]string {
+	if store == nil {
+		return nil
+	}
+	cp := make(map[string]string, len(store))
+	for k, v := range store {
+		cp[k] = v
+	}
+	return cp
+}
