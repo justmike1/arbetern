@@ -76,6 +76,10 @@ spec:
                   name: {{ .Values.secretName }}
                   key: azure-api-key
             {{- end }}
+            - name: GOMEMLIMIT
+              value: {{ .Values.goRuntime.goMemLimit | quote }}
+            - name: GOGC
+              value: {{ .Values.goRuntime.goGC | quote }}
           {{- with .Values.livenessProbe }}
           livenessProbe:
             {{- toYaml . | nindent 12 }}

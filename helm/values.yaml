@@ -77,11 +77,18 @@ httpRoute:
 
 resources:
   requests:
-    cpu: 100m
-    memory: 64Mi
+    cpu: 250m
+    memory: 1Gi
   limits:
-    cpu: 500m
-    memory: 128Mi
+    cpu: "1"
+    memory: 2Gi
+
+# Go runtime memory tuning — should be sized in relation to resources.limits.memory above.
+# GOMEMLIMIT: soft memory ceiling for the Go runtime (set ~12% below the hard limit to avoid OOM kills).
+# GOGC: GC target percentage — higher value = less frequent GC = more memory used between collections.
+goRuntime:
+  goMemLimit: "1750MiB"
+  goGC: "200"
 
 livenessProbe:
   httpGet:

@@ -204,6 +204,168 @@ func (c *Client) ListUserRepos(ctx context.Context) ([]string, error) {
 
 var workflowRunURLPattern = regexp.MustCompile(`https://github\.com/([^/]+)/([^/]+)/actions/runs/(\d+)`)
 
+// prURLPattern matches GitHub PR URLs like https://github.com/owner/repo/pull/123
+var prURLPattern = regexp.MustCompile(`https://github\.com/([^/]+)/([^/]+)/pull/(\d+)`)
+
+// ExtractPRURLs returns all GitHub PR URLs found in the given text.
+func ExtractPRURLs(text string) []string {
+	return prURLPattern.FindAllString(text, -1)
+}
+
+// ParsePRURL extracts owner, repo, and PR number from a GitHub PR URL.
+func ParsePRURL(rawURL string) (owner, repo string, number int, err error) {
+	matches := prURLPattern.FindStringSubmatch(rawURL)
+	if len(matches) != 4 {
+		return "", "", 0, fmt.Errorf("not a valid GitHub PR URL: %s", rawURL)
+	}
+	n, err := strconv.Atoi(matches[3])
+	if err != nil {
+		return "", "", 0, fmt.Errorf("invalid PR number in URL: %w", err)
+	}
+	return matches[1], matches[2], n, nil
+}
+
+// PRSummary holds essential information about a pull request.
+type PRSummary struct {
+	Number    int
+	Title     string
+	State     string
+	Author    string
+	URL       string
+	Body      string
+	Diff      string
+	FileNames []string
+}
+
+// GetPullRequest fetches a PR's details and diff.
+func (c *Client) GetPullRequest(ctx context.Context, owner, repo string, number int) (*PRSummary, error) {
+	pr, _, err := c.api.PullRequests.Get(ctx, owner, repo, number)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get PR #%d: %w", number, err)
+	}
+
+	summary := &PRSummary{
+		Number: number,
+		Title:  pr.GetTitle(),
+		State:  pr.GetState(),
+		Author: pr.GetUser().GetLogin(),
+		URL:    pr.GetHTMLURL(),
+		Body:   pr.GetBody(),
+	}
+
+	// Get changed files.
+	files, _, err := c.api.PullRequests.ListFiles(ctx, owner, repo, number, &gh.ListOptions{PerPage: 100})
+	if err == nil {
+		var diff strings.Builder
+		for _, f := range files {
+			summary.FileNames = append(summary.FileNames, f.GetFilename())
+			fmt.Fprintf(&diff, "--- %s (%s, +%d -%d)\n", f.GetFilename(), f.GetStatus(), f.GetAdditions(), f.GetDeletions())
+			if patch := f.GetPatch(); patch != "" {
+				diff.WriteString(patch)
+				diff.WriteString("\n\n")
+			}
+		}
+		summary.Diff = diff.String()
+	}
+
+	return summary, nil
+}
+
+// FormatPRSummary turns a PRSummary into a readable string.
+func FormatPRSummary(s *PRSummary) string {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "PR #%d: %s\n", s.Number, s.Title)
+	fmt.Fprintf(&sb, "Author: %s | State: %s\n", s.Author, s.State)
+	fmt.Fprintf(&sb, "URL: %s\n", s.URL)
+	if s.Body != "" {
+		body := s.Body
+		if len(body) > 1000 {
+			body = body[:1000] + "..."
+		}
+		fmt.Fprintf(&sb, "\nDescription:\n%s\n", body)
+	}
+	if len(s.FileNames) > 0 {
+		fmt.Fprintf(&sb, "\nChanged files (%d):\n", len(s.FileNames))
+		for _, f := range s.FileNames {
+			fmt.Fprintf(&sb, "  • %s\n", f)
+		}
+	}
+	if s.Diff != "" {
+		diff := s.Diff
+		if len(diff) > 12000 {
+			diff = diff[:12000] + "\n... (diff truncated)"
+		}
+		fmt.Fprintf(&sb, "\nDiff:\n%s\n", diff)
+	}
+	return sb.String()
+}
+
+// ListPullRequests returns recent PRs for a repo.
+func (c *Client) ListPullRequests(ctx context.Context, owner, repo, state string, limit int) ([]PRSummary, error) {
+	if state == "" {
+		state = "all"
+	}
+	if limit <= 0 || limit > 30 {
+		limit = 10
+	}
+
+	prs, _, err := c.api.PullRequests.List(ctx, owner, repo, &gh.PullRequestListOptions{
+		State:       state,
+		Sort:        "updated",
+		Direction:   "desc",
+		ListOptions: gh.ListOptions{PerPage: limit},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list PRs: %w", err)
+	}
+
+	var summaries []PRSummary
+	for _, pr := range prs {
+		summaries = append(summaries, PRSummary{
+			Number: pr.GetNumber(),
+			Title:  pr.GetTitle(),
+			State:  pr.GetState(),
+			Author: pr.GetUser().GetLogin(),
+			URL:    pr.GetHTMLURL(),
+		})
+	}
+	return summaries, nil
+}
+
+// SearchCode searches for code content in a repository using the GitHub code search API.
+func (c *Client) SearchCode(ctx context.Context, owner, repo, query string) ([]CodeSearchResult, error) {
+	q := fmt.Sprintf("%s repo:%s/%s", query, owner, repo)
+	results, _, err := c.api.Search.Code(ctx, q, &gh.SearchOptions{
+		ListOptions: gh.ListOptions{PerPage: 30},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to search code: %w", err)
+	}
+
+	var matches []CodeSearchResult
+	for _, r := range results.CodeResults {
+		match := CodeSearchResult{
+			File: r.GetPath(),
+			Repo: r.GetRepository().GetFullName(),
+			URL:  r.GetHTMLURL(),
+		}
+		// Extract matching text fragments if available.
+		for _, frag := range r.TextMatches {
+			match.Fragments = append(match.Fragments, frag.GetFragment())
+		}
+		matches = append(matches, match)
+	}
+	return matches, nil
+}
+
+// CodeSearchResult represents a single code search hit.
+type CodeSearchResult struct {
+	File      string
+	Repo      string
+	URL       string
+	Fragments []string
+}
+
 func ParseWorkflowRunURL(rawURL string) (owner, repo string, runID int64, err error) {
 	matches := workflowRunURLPattern.FindStringSubmatch(rawURL)
 	if len(matches) != 4 {

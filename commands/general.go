@@ -214,6 +214,53 @@ func (h *GeneralHandler) buildTools() []github.Tool {
 				}`),
 			},
 		},
+		{
+			Type: "function",
+			Function: github.ToolFunction{
+				Name:        "get_pull_request",
+				Description: "Get details, changed files, and diff of a GitHub pull request by number or URL. Use this to analyze what a PR changed, understand code patterns introduced or removed, and find old/new usage patterns.",
+				Parameters: json.RawMessage(`{
+					"type":"object",
+					"properties":{
+						"repo":{"type":"string","description":"Repository name (without owner)"},
+						"number":{"type":"integer","description":"Pull request number (e.g., 123)"},
+						"url":{"type":"string","description":"Full GitHub PR URL (alternative to repo+number). If provided, repo and number are extracted from it."}
+					},
+					"required":[]
+				}`),
+			},
+		},
+		{
+			Type: "function",
+			Function: github.ToolFunction{
+				Name:        "list_pull_requests",
+				Description: "List recent pull requests in a repository. Useful for finding relevant PRs by title, discovering recent changes, or identifying the PR that introduced a particular change.",
+				Parameters: json.RawMessage(`{
+					"type":"object",
+					"properties":{
+						"repo":{"type":"string","description":"Repository name (without owner)"},
+						"state":{"type":"string","description":"Filter by state: 'open', 'closed', or 'all' (default: 'all')"},
+						"limit":{"type":"integer","description":"Maximum number of PRs to return (default: 10, max: 30)"}
+					},
+					"required":["repo"]
+				}`),
+			},
+		},
+		{
+			Type: "function",
+			Function: github.ToolFunction{
+				Name:        "search_code",
+				Description: "Search for code content within a GitHub repository. Unlike search_files (which matches file names/paths), this searches inside file contents. Use this to find usages of functions, classes, patterns, imports, or any code string across the entire repository. Returns matching files with code fragments showing the context around each match.",
+				Parameters: json.RawMessage(`{
+					"type":"object",
+					"properties":{
+						"repo":{"type":"string","description":"Repository name (without owner)"},
+						"query":{"type":"string","description":"Code search query. Can include the code pattern to find (e.g., 'db.session', 'SessionLocal()', 'def create_session'). Supports GitHub code search qualifiers like 'language:python', 'path:src/', 'extension:py'."}
+					},
+					"required":["repo","query"]
+				}`),
+			},
+		},
 	}
 }
 
@@ -430,6 +477,97 @@ func (h *GeneralHandler) executeTool(ctx context.Context, channelID, userID, nam
 		}
 		log.Printf("[user=%s channel=%s] PR created via modify_file: %s", userID, channelID, prURL)
 		return fmt.Sprintf("Pull request created: %s", prURL)
+
+	case "get_pull_request":
+		var args struct {
+			Repo   string `json:"repo"`
+			Number int    `json:"number"`
+			URL    string `json:"url"`
+		}
+		if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+			return fmt.Sprintf("Error parsing arguments: %v", err)
+		}
+		owner, err := h.ghClient.ResolveOwner(ctx)
+		if err != nil {
+			return fmt.Sprintf("Error resolving owner: %v", err)
+		}
+		// If a URL was provided, extract owner/repo/number from it.
+		if args.URL != "" {
+			prOwner, prRepo, prNum, parseErr := github.ParsePRURL(args.URL)
+			if parseErr != nil {
+				return fmt.Sprintf("Error parsing PR URL: %v", parseErr)
+			}
+			owner = prOwner
+			args.Repo = prRepo
+			args.Number = prNum
+		}
+		if args.Number == 0 {
+			return "Error: PR number or URL is required."
+		}
+		pr, err := h.ghClient.GetPullRequest(ctx, owner, args.Repo, args.Number)
+		if err != nil {
+			return fmt.Sprintf("Error getting PR: %v", err)
+		}
+		log.Printf("[user=%s channel=%s] fetched PR #%d in %s/%s", userID, channelID, args.Number, owner, args.Repo)
+		return github.FormatPRSummary(pr)
+
+	case "list_pull_requests":
+		var args struct {
+			Repo  string `json:"repo"`
+			State string `json:"state"`
+			Limit int    `json:"limit"`
+		}
+		if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+			return fmt.Sprintf("Error parsing arguments: %v", err)
+		}
+		owner, err := h.ghClient.ResolveOwner(ctx)
+		if err != nil {
+			return fmt.Sprintf("Error resolving owner: %v", err)
+		}
+		prs, err := h.ghClient.ListPullRequests(ctx, owner, args.Repo, args.State, args.Limit)
+		if err != nil {
+			return fmt.Sprintf("Error listing PRs: %v", err)
+		}
+		if len(prs) == 0 {
+			return fmt.Sprintf("No pull requests found in %s (state: %s).", args.Repo, args.State)
+		}
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "Pull Requests in %s (%d):\n", args.Repo, len(prs))
+		for _, pr := range prs {
+			fmt.Fprintf(&sb, "  • #%d %s (%s) by %s — %s\n", pr.Number, pr.Title, pr.State, pr.Author, pr.URL)
+		}
+		log.Printf("[user=%s channel=%s] listed %d PRs in %s", userID, channelID, len(prs), args.Repo)
+		return sb.String()
+
+	case "search_code":
+		var args struct {
+			Repo  string `json:"repo"`
+			Query string `json:"query"`
+		}
+		if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+			return fmt.Sprintf("Error parsing arguments: %v", err)
+		}
+		owner, err := h.ghClient.ResolveOwner(ctx)
+		if err != nil {
+			return fmt.Sprintf("Error resolving owner: %v", err)
+		}
+		results, err := h.ghClient.SearchCode(ctx, owner, args.Repo, args.Query)
+		if err != nil {
+			return fmt.Sprintf("Error searching code: %v", err)
+		}
+		if len(results) == 0 {
+			return fmt.Sprintf("No code matches found for '%s' in %s. Try different search terms, broader patterns, or check if the repository name is correct.", args.Query, args.Repo)
+		}
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "Code search results for '%s' in %s (%d matches):\n", args.Query, args.Repo, len(results))
+		for _, r := range results {
+			fmt.Fprintf(&sb, "\n• %s\n  %s\n", r.File, r.URL)
+			for _, frag := range r.Fragments {
+				fmt.Fprintf(&sb, "  ```\n  %s\n  ```\n", frag)
+			}
+		}
+		log.Printf("[user=%s channel=%s] searched code in %s for '%s' (%d matches)", userID, channelID, args.Repo, args.Query, len(results))
+		return sb.String()
 
 	default:
 		return fmt.Sprintf("Unknown tool: %s", name)
