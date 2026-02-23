@@ -70,7 +70,11 @@ func main() {
 
 	// Agent management UI (embedded static files) — behind IP whitelist if configured.
 	uiContent, _ := fs.Sub(uiFS, "ui")
-	uiHandler := ipWhitelist(cfg.UIAllowedCIDRs, http.StripPrefix("/ui/", http.FileServer(http.FS(uiContent))))
+	uiCIDRs := parseCIDRs(cfg.UIAllowedCIDRs)
+	if len(uiCIDRs) > 0 {
+		log.Printf("UI IP whitelist enabled: %s", cfg.UIAllowedCIDRs)
+	}
+	uiHandler := ipWhitelist(uiCIDRs, http.StripPrefix("/ui/", http.FileServer(http.FS(uiContent))))
 	http.Handle("/ui/", uiHandler)
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" {
@@ -101,7 +105,7 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]string{"header": headerTitle})
 	})
-	http.Handle("/api/", ipWhitelist(cfg.UIAllowedCIDRs, apiMux))
+	http.Handle("/api/", ipWhitelist(uiCIDRs, apiMux))
 
 	log.Printf("arbetern server starting on :%s", cfg.Port)
 	if err := http.ListenAndServe(":"+cfg.Port, nil); err != nil {

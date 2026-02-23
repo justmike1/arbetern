@@ -7,17 +7,14 @@ import (
 	"strings"
 )
 
-// ipWhitelist returns middleware that restricts access to the given CIDR list.
-// If allowedCIDRs is empty, all requests are allowed (whitelist disabled).
+// ipWhitelist returns middleware that restricts access to the given parsed CIDR list.
+// If cidrs is empty, the next handler is returned as-is (whitelist disabled).
 // The middleware checks X-Forwarded-For first (for requests behind a load balancer),
 // then falls back to the direct remote address.
-func ipWhitelist(allowedCIDRs string, next http.Handler) http.Handler {
-	cidrs := parseCIDRs(allowedCIDRs)
+func ipWhitelist(cidrs []*net.IPNet, next http.Handler) http.Handler {
 	if len(cidrs) == 0 {
 		return next // No restriction configured.
 	}
-
-	log.Printf("UI IP whitelist enabled: %s", allowedCIDRs)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		clientIP := clientIP(r)
