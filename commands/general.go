@@ -334,7 +334,7 @@ func (h *GeneralHandler) buildTools() []github.Tool {
 			Type: "function",
 			Function: github.ToolFunction{
 				Name:        "create_jira_ticket",
-				Description: "Create a Jira ticket (issue). Use this when the user asks to create a ticket, task, story, or bug from the conversation content (e.g., a test plan, action item, or bug report). Populate the summary and description from the relevant content discussed in the conversation. IMPORTANT: Format the description using markdown — use # for headers, - for bullet lists, 1) for numbered lists, **bold** for emphasis, and `code` for inline code. Structure the ticket professionally with clear sections (e.g., ## Context, ## Scope, ## Acceptance Criteria).",
+				Description: "Create a Jira ticket (issue). Use this when the user asks to create a ticket, task, story, or bug from the conversation content (e.g., a test plan, action item, or bug report). Populate the summary and description from the relevant content discussed in the conversation. IMPORTANT: Format the description using markdown — use # for headers, - for bullet lists, 1) for numbered lists, **bold** for emphasis, and `code` for inline code. Structure the ticket professionally with clear sections (e.g., ## Context, ## Scope, ## Acceptance Criteria). If the user asks to assign the ticket to a person, use the assignee field. If the user asks to assign to a team, use the team field. Both can be used at the same time.",
 				Parameters: json.RawMessage(`{
 					"type":"object",
 					"properties":{
@@ -342,7 +342,9 @@ func (h *GeneralHandler) buildTools() []github.Tool {
 						"summary":{"type":"string","description":"Short one-line title for the ticket."},
 						"description":{"type":"string","description":"Detailed, well-structured description using markdown formatting. Use ## for section headers, - for bullet points, 1) for numbered steps, **bold** for key terms, and backticks for code references. Organize into clear sections like Context, Scope, Test Plan, Acceptance Criteria, References, etc."},
 						"issue_type":{"type":"string","description":"Issue type: 'Task', 'Bug', 'Story', 'Epic', etc. Default: 'Task'."},
-						"labels":{"type":"array","items":{"type":"string"},"description":"Optional labels to apply to the ticket (e.g. ['qa','automated-test'])."}
+						"labels":{"type":"array","items":{"type":"string"},"description":"Optional labels to apply to the ticket (e.g. ['qa','automated-test'])."},
+						"assignee":{"type":"string","description":"Name of the person to assign the ticket to (e.g. 'Udi', 'John Smith'). The system will search for a matching Jira user."},
+						"team":{"type":"string","description":"Name of the team to assign the ticket to (e.g. 'Application', 'DevOps', 'asgard'). The system will search for a matching Jira team."}
 					},
 					"required":["summary","description"]
 				}`),
@@ -731,6 +733,8 @@ func (h *GeneralHandler) executeTool(ctx context.Context, channelID, userID, aud
 			Description string   `json:"description"`
 			IssueType   string   `json:"issue_type"`
 			Labels      []string `json:"labels"`
+			Assignee    string   `json:"assignee"`
+			Team        string   `json:"team"`
 		}
 		if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 			return fmt.Sprintf("Error parsing arguments: %v", err)
@@ -738,7 +742,7 @@ func (h *GeneralHandler) executeTool(ctx context.Context, channelID, userID, aud
 		// Append agent stamp to the description.
 		stamp := fmt.Sprintf("\n\n---\nCreated by **%s** via Arbetern", h.agentID)
 		if h.appURL != "" {
-			stamp += fmt.Sprintf(" | %s/ui/", h.appURL)
+			stamp += fmt.Sprintf(" | %s/ui/", strings.TrimRight(h.appURL, "/"))
 		}
 		if h.currentChannelID != "" && h.currentAuditTS != "" {
 			if permalink, err := h.slackClient.GetPermalink(h.currentChannelID, h.currentAuditTS); err == nil && permalink != "" {
@@ -747,16 +751,63 @@ func (h *GeneralHandler) executeTool(ctx context.Context, channelID, userID, aud
 		}
 		args.Description += stamp
 
+		// Resolve assignee name to Jira account ID.
+		var assigneeID string
+		if args.Assignee != "" {
+			project := args.Project
+			users, err := h.jiraClient.SearchAssignableUsers(args.Assignee, project)
+			if err != nil {
+				log.Printf("[user=%s channel=%s] Jira user search failed for %q: %v", userID, channelID, args.Assignee, err)
+			} else if len(users) > 0 {
+				best, isGood := jira.BestUserMatch(users, args.Assignee)
+				if isGood {
+					assigneeID = best.AccountID
+					log.Printf("[user=%s channel=%s] resolved assignee %q to user %s (%s)", userID, channelID, args.Assignee, best.DisplayName, assigneeID)
+				} else {
+					log.Printf("[user=%s channel=%s] user search for %q returned %d results but none matched well (top: %s)", userID, channelID, args.Assignee, len(users), users[0].DisplayName)
+				}
+			} else {
+				log.Printf("[user=%s channel=%s] no Jira user found for %q", userID, channelID, args.Assignee)
+			}
+		}
+
+		// Resolve team name independently.
+		var teamFieldID string
+		var teamID string
+		var teamDisplayName string
+		if args.Team != "" {
+			fid, tid, dname, err := h.jiraClient.ResolveTeam(args.Team)
+			if err != nil {
+				log.Printf("[user=%s channel=%s] team resolution failed for %q: %v", userID, channelID, args.Team, err)
+			} else {
+				teamFieldID = fid
+				teamID = tid
+				teamDisplayName = dname
+				log.Printf("[user=%s channel=%s] resolved %q to team %s (field: %s)", userID, channelID, args.Team, teamDisplayName, teamFieldID)
+			}
+		}
+
 		issue, err := h.jiraClient.CreateIssue(jira.CreateIssueInput{
 			Project:     args.Project,
 			Summary:     args.Summary,
 			Description: args.Description,
 			IssueType:   args.IssueType,
 			Labels:      args.Labels,
+			AssigneeID:  assigneeID,
 		})
 		if err != nil {
 			return fmt.Sprintf("Error creating Jira ticket: %v", err)
 		}
+
+		// Set team if resolved (update after creation since team is a custom field).
+		if teamFieldID != "" && teamID != "" {
+			if err := h.jiraClient.SetTeamField(issue.Key, teamFieldID, teamID); err != nil {
+				log.Printf("[user=%s channel=%s] failed to set team %s on %s: %v", userID, channelID, teamDisplayName, issue.Key, err)
+			} else {
+				log.Printf("[user=%s channel=%s] set team %s on %s", userID, channelID, teamDisplayName, issue.Key)
+			}
+		}
+
 		log.Printf("[user=%s channel=%s] created Jira ticket %s: %s", userID, channelID, issue.Key, issue.Browse)
 		return fmt.Sprintf("Jira ticket created: *%s* — %s\nSummary: %s", issue.Key, issue.Browse, args.Summary)
 

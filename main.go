@@ -28,11 +28,6 @@ func main() {
 
 	slackClient := ovadslack.NewClient(cfg.SlackBotToken)
 
-	teamURL, err := slackClient.GetTeamURL()
-	if err != nil {
-		log.Printf("Warning: could not fetch Slack team URL: %v", err)
-	}
-
 	var ghClient *github.Client
 	if cfg.GitHubToken != "" {
 		ghClient = github.NewClient(cfg.GitHubToken)
@@ -68,7 +63,7 @@ func main() {
 			log.Fatalf("failed to load prompts for agent %s: %v", agent.ID, err)
 		}
 
-		router := commands.NewRouter(slackClient, ghClient, modelsClient, jiraClient, ap, agent.ID, teamURL)
+		router := commands.NewRouter(slackClient, ghClient, modelsClient, jiraClient, ap, agent.ID, cfg.AppURL)
 		handler := ovadslack.NewHandler(cfg.SlackSigningSecret, router.Handle)
 
 		webhookPath := fmt.Sprintf("/%s/webhook", agent.ID)

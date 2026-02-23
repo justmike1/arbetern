@@ -24,6 +24,7 @@ type Config struct {
 	JiraEmail          string
 	JiraAPIToken       string
 	JiraProject        string
+	AppURL             string
 }
 
 // UseAzure returns true when Azure OpenAI credentials are configured.
@@ -50,6 +51,7 @@ func Load() (*Config, error) {
 		JiraEmail:          os.Getenv("JIRA_EMAIL"),
 		JiraAPIToken:       os.Getenv("JIRA_API_TOKEN"),
 		JiraProject:        os.Getenv("JIRA_PROJECT"),
+		AppURL:             os.Getenv("APP_URL"),
 	}
 
 	if cfg.SlackBotToken == "" {
