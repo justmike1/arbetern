@@ -39,6 +39,14 @@ func (c *Client) PostMessage(channelID, text string) error {
 	return nil
 }
 
+func (c *Client) PostThreadReply(channelID, threadTS, text string) error {
+	_, _, err := c.api.PostMessage(channelID, slack.MsgOptionText(text, false), slack.MsgOptionTS(threadTS))
+	if err != nil {
+		return fmt.Errorf("failed to post thread reply: %w", err)
+	}
+	return nil
+}
+
 func (c *Client) PostEphemeral(channelID, userID, text string) error {
 	_, err := c.api.PostEphemeral(channelID, userID, slack.MsgOptionText(text, false))
 	if err != nil {

@@ -90,7 +90,7 @@ func formatMessages(messages []slacklib.Message) string {
 		if idx == 1 {
 			label = " [LATEST]"
 		}
-		fmt.Fprintf(&sb, "Message %d%s [%s @%s]: %s\n", idx, label, ts, sender, text)
+		fmt.Fprintf(&sb, "Message %d%s [%s @%s] (thread_ts=%s): %s\n", idx, label, ts, sender, msg.Timestamp, text)
 		idx++
 	}
 	if idx == 1 {

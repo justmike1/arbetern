@@ -72,7 +72,7 @@ func (r *Router) Handle(channelID, userID, text, responseURL string) {
 
 	default:
 		log.Printf("[user=%s channel=%s] routed to: general handler", userID, channelID)
-		handler := &GeneralHandler{ghClient: r.ghClient, modelsClient: r.modelsClient, contextProvider: r.contextProvider, memory: r.memory, prompts: r.prompts}
+		handler := &GeneralHandler{slackClient: r.slackClient, ghClient: r.ghClient, modelsClient: r.modelsClient, contextProvider: r.contextProvider, memory: r.memory, prompts: r.prompts}
 		handler.Execute(channelID, userID, text, responseURL)
 	}
 }

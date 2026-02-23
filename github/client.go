@@ -129,6 +129,7 @@ func (c *Client) SearchFiles(ctx context.Context, owner, repo, branch, pattern s
 	if err != nil {
 		return nil, fmt.Errorf("failed to get tree: %w", err)
 	}
+
 	lowerPattern := strings.ToLower(pattern)
 	var matches []string
 	for _, entry := range tree.Entries {
@@ -137,6 +138,21 @@ func (c *Client) SearchFiles(ctx context.Context, owner, repo, branch, pattern s
 			matches = append(matches, path)
 		}
 	}
+
+	// If the tree was truncated (very large repo), fall back to GitHub code search
+	// to find files by path, which doesn't have the same size limitation.
+	if tree.GetTruncated() && len(matches) == 0 {
+		q := fmt.Sprintf("filename:%s repo:%s/%s", pattern, owner, repo)
+		results, _, searchErr := c.api.Search.Code(ctx, q, &gh.SearchOptions{
+			ListOptions: gh.ListOptions{PerPage: 100},
+		})
+		if searchErr == nil {
+			for _, r := range results.CodeResults {
+				matches = append(matches, r.GetPath())
+			}
+		}
+	}
+
 	return matches, nil
 }
 
@@ -253,10 +269,14 @@ func (c *Client) GetPullRequest(ctx context.Context, owner, repo string, number 
 		Body:   pr.GetBody(),
 	}
 
-	// Get changed files.
-	files, _, err := c.api.PullRequests.ListFiles(ctx, owner, repo, number, &gh.ListOptions{PerPage: 100})
-	if err == nil {
-		var diff strings.Builder
+	// Get changed files with pagination.
+	var diff strings.Builder
+	opts := &gh.ListOptions{PerPage: 100}
+	for {
+		files, resp, err := c.api.PullRequests.ListFiles(ctx, owner, repo, number, opts)
+		if err != nil {
+			break
+		}
 		for _, f := range files {
 			summary.FileNames = append(summary.FileNames, f.GetFilename())
 			fmt.Fprintf(&diff, "--- %s (%s, +%d -%d)\n", f.GetFilename(), f.GetStatus(), f.GetAdditions(), f.GetDeletions())
@@ -265,8 +285,12 @@ func (c *Client) GetPullRequest(ctx context.Context, owner, repo string, number 
 				diff.WriteString("\n\n")
 			}
 		}
-		summary.Diff = diff.String()
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
 	}
+	summary.Diff = diff.String()
 
 	return summary, nil
 }
@@ -333,29 +357,45 @@ func (c *Client) ListPullRequests(ctx context.Context, owner, repo, state string
 }
 
 // SearchCode searches for code content in a repository using the GitHub code search API.
+// Paginates through all results (up to GitHub's 1000-result limit) and requests text-match fragments.
 func (c *Client) SearchCode(ctx context.Context, owner, repo, query string) ([]CodeSearchResult, error) {
 	q := fmt.Sprintf("%s repo:%s/%s", query, owner, repo)
-	results, _, err := c.api.Search.Code(ctx, q, &gh.SearchOptions{
-		ListOptions: gh.ListOptions{PerPage: 30},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to search code: %w", err)
+
+	var allMatches []CodeSearchResult
+	opts := &gh.SearchOptions{
+		TextMatch:   true,
+		ListOptions: gh.ListOptions{PerPage: 100},
 	}
 
-	var matches []CodeSearchResult
-	for _, r := range results.CodeResults {
-		match := CodeSearchResult{
-			File: r.GetPath(),
-			Repo: r.GetRepository().GetFullName(),
-			URL:  r.GetHTMLURL(),
+	for {
+		results, resp, err := c.api.Search.Code(ctx, q, opts)
+		if err != nil {
+			// If we already have some results and hit a secondary rate limit, return what we have.
+			if len(allMatches) > 0 {
+				break
+			}
+			return nil, fmt.Errorf("failed to search code: %w", err)
 		}
-		// Extract matching text fragments if available.
-		for _, frag := range r.TextMatches {
-			match.Fragments = append(match.Fragments, frag.GetFragment())
+
+		for _, r := range results.CodeResults {
+			match := CodeSearchResult{
+				File: r.GetPath(),
+				Repo: r.GetRepository().GetFullName(),
+				URL:  r.GetHTMLURL(),
+			}
+			for _, frag := range r.TextMatches {
+				match.Fragments = append(match.Fragments, frag.GetFragment())
+			}
+			allMatches = append(allMatches, match)
 		}
-		matches = append(matches, match)
+
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
 	}
-	return matches, nil
+
+	return allMatches, nil
 }
 
 // CodeSearchResult represents a single code search hit.

@@ -14,6 +14,7 @@ import (
 const maxToolRounds = 20
 
 type GeneralHandler struct {
+	slackClient     SlackClient
 	ghClient        *github.Client
 	modelsClient    *github.ModelsClient
 	contextProvider *ContextProvider
@@ -258,6 +259,21 @@ func (h *GeneralHandler) buildTools() []github.Tool {
 						"query":{"type":"string","description":"Code search query. Can include the code pattern to find (e.g., 'db.session', 'SessionLocal()', 'def create_session'). Supports GitHub code search qualifiers like 'language:python', 'path:src/', 'extension:py'."}
 					},
 					"required":["repo","query"]
+				}`),
+			},
+		},
+		{
+			Type: "function",
+			Function: github.ToolFunction{
+				Name:        "reply_in_thread",
+				Description: "Post a message as a threaded reply to a specific Slack message. Use this when the user asks you to reply inside someone's thread or respond to a particular message. You need the thread_ts of the target message, which you can find in the channel context output (each message includes a thread_ts value).",
+				Parameters: json.RawMessage(`{
+					"type":"object",
+					"properties":{
+						"thread_ts":{"type":"string","description":"The thread_ts timestamp of the message to reply to (e.g., '1708700000.123456'). Get this from the channel context."},
+						"text":{"type":"string","description":"The message text to post as a threaded reply. Supports Slack markdown formatting."}
+					},
+					"required":["thread_ts","text"]
 				}`),
 			},
 		},
@@ -568,6 +584,20 @@ func (h *GeneralHandler) executeTool(ctx context.Context, channelID, userID, nam
 		}
 		log.Printf("[user=%s channel=%s] searched code in %s for '%s' (%d matches)", userID, channelID, args.Repo, args.Query, len(results))
 		return sb.String()
+
+	case "reply_in_thread":
+		var args struct {
+			ThreadTS string `json:"thread_ts"`
+			Text     string `json:"text"`
+		}
+		if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+			return fmt.Sprintf("Error parsing arguments: %v", err)
+		}
+		if err := h.slackClient.PostThreadReply(channelID, args.ThreadTS, args.Text); err != nil {
+			return fmt.Sprintf("Error posting thread reply: %v", err)
+		}
+		log.Printf("[user=%s channel=%s] posted thread reply to ts=%s", userID, channelID, args.ThreadTS)
+		return "Successfully posted reply in thread."
 
 	default:
 		return fmt.Sprintf("Unknown tool: %s", name)
