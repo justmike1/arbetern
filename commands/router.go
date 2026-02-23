@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/justmike1/ovad/github"
+	"github.com/justmike1/ovad/jira"
 	ovadslack "github.com/justmike1/ovad/slack"
 )
 
@@ -13,21 +14,25 @@ type Router struct {
 	slackClient     SlackClient
 	ghClient        *github.Client
 	modelsClient    *github.ModelsClient
+	jiraClient      *jira.Client
 	contextProvider *ContextProvider
 	memory          *ConversationMemory
 	prompts         PromptProvider
 	agentID         string
+	appURL          string
 }
 
-func NewRouter(slackClient SlackClient, ghClient *github.Client, modelsClient *github.ModelsClient, pp PromptProvider, agentID string) *Router {
+func NewRouter(slackClient SlackClient, ghClient *github.Client, modelsClient *github.ModelsClient, jiraClient *jira.Client, pp PromptProvider, agentID, appURL string) *Router {
 	return &Router{
 		slackClient:     slackClient,
 		ghClient:        ghClient,
 		modelsClient:    modelsClient,
+		jiraClient:      jiraClient,
 		contextProvider: NewContextProvider(slackClient),
 		memory:          NewConversationMemory(),
 		prompts:         pp,
 		agentID:         agentID,
+		appURL:          appURL,
 	}
 }
 
@@ -77,7 +82,7 @@ func (r *Router) Handle(channelID, userID, text, responseURL string) {
 
 	default:
 		log.Printf("[user=%s channel=%s] routed to: general handler", userID, channelID)
-		handler := &GeneralHandler{slackClient: r.slackClient, ghClient: r.ghClient, modelsClient: r.modelsClient, contextProvider: r.contextProvider, memory: r.memory, prompts: r.prompts}
+		handler := &GeneralHandler{slackClient: r.slackClient, ghClient: r.ghClient, modelsClient: r.modelsClient, jiraClient: r.jiraClient, contextProvider: r.contextProvider, memory: r.memory, prompts: r.prompts, agentID: r.agentID, appURL: r.appURL}
 		handler.Execute(channelID, userID, text, responseURL, auditTS)
 	}
 }

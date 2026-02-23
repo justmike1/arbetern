@@ -192,6 +192,34 @@ func tsToTime(ts string) (time.Time, error) {
 
 var slackLinkRe = regexp.MustCompile(`<(https?://[^|>]+)(?:\|[^>]*)?>`)
 
+// slackThreadURLRe matches Slack thread/message URLs like:
+// https://org.slack.com/archives/C01BS13KFL7/p1771847194296799
+// https://org.slack.com/archives/C01BS13KFL7/p1771849373029919?thread_ts=1771847194.296799&cid=C01BS13KFL7
+var slackThreadURLRe = regexp.MustCompile(`https://[^/]+\.slack\.com/archives/([A-Z0-9]+)/p(\d{10})(\d{6})`)
+
+// ParseSlackThreadURL extracts channelID and thread_ts from a Slack message URL.
+// The "p" parameter encodes the timestamp as digits without a dot (e.g., p1771847194296799 → 1771847194.296799).
+// If the URL has ?thread_ts=..., that value is used; otherwise the timestamp is derived from the "p" segment.
+func ParseSlackThreadURL(rawURL string) (channelID, threadTS string, err error) {
+	m := slackThreadURLRe.FindStringSubmatch(rawURL)
+	if m == nil {
+		return "", "", fmt.Errorf("not a valid Slack message URL")
+	}
+	channelID = m[1]
+	// Check for explicit thread_ts query param.
+	if idx := strings.Index(rawURL, "thread_ts="); idx >= 0 {
+		rest := rawURL[idx+len("thread_ts="):]
+		if ampIdx := strings.Index(rest, "&"); ampIdx >= 0 {
+			rest = rest[:ampIdx]
+		}
+		threadTS = rest
+	} else {
+		// Derive from the p-segment: p<10-digit-seconds><6-digit-microseconds> → seconds.microseconds
+		threadTS = m[2] + "." + m[3]
+	}
+	return channelID, threadTS, nil
+}
+
 // expandSlackLinks replaces Slack mrkdwn links like <https://url|label> with "label: https://url"
 // and bare <https://url> with just the URL, so workflow-run URLs become visible for extraction.
 func expandSlackLinks(text string) string {

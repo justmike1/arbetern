@@ -20,11 +20,20 @@ type Config struct {
 	AzureAPIKey        string
 	Port               string
 	UIAllowedCIDRs     string
+	JiraURL            string
+	JiraEmail          string
+	JiraAPIToken       string
+	JiraProject        string
 }
 
 // UseAzure returns true when Azure OpenAI credentials are configured.
 func (c *Config) UseAzure() bool {
 	return c.AzureEndpoint != "" && c.AzureAPIKey != ""
+}
+
+// JiraConfigured returns true when Jira credentials are present.
+func (c *Config) JiraConfigured() bool {
+	return c.JiraURL != "" && c.JiraEmail != "" && c.JiraAPIToken != ""
 }
 
 func Load() (*Config, error) {
@@ -37,6 +46,10 @@ func Load() (*Config, error) {
 		AzureAPIKey:        os.Getenv("AZURE_API_KEY"),
 		Port:               os.Getenv("PORT"),
 		UIAllowedCIDRs:     os.Getenv("UI_ALLOWED_CIDRS"),
+		JiraURL:            os.Getenv("JIRA_URL"),
+		JiraEmail:          os.Getenv("JIRA_EMAIL"),
+		JiraAPIToken:       os.Getenv("JIRA_API_TOKEN"),
+		JiraProject:        os.Getenv("JIRA_PROJECT"),
 	}
 
 	if cfg.SlackBotToken == "" {

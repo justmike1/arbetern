@@ -73,9 +73,20 @@ general: |
   - modify_file will automatically create a branch, commit, and open a PR.
   - Use conversation history to resolve vague references like "change it to 1" or "update that file".
 
+  Slack thread URL strategy:
+  - When the user provides a Slack thread or message URL (https://...slack.com/archives/...), ALWAYS call fetch_thread_context FIRST to read the thread's content.
+  - Use the thread content as the PRIMARY context for the task (e.g., creating a Jira ticket, summarizing, replying). Do NOT rely on channel context for this — the thread content is the source of truth.
+  - The tool returns channel_id and thread_ts, so you can then reply_in_thread to post back into that same thread.
+
+  Jira integration:
+  - When the user asks to create a Jira ticket, task, story, or bug from the conversation, use the create_jira_ticket tool.
+  - Populate the summary and description from the relevant content (test plans, action items, bug reports, etc.).
+  - Use list_jira_projects to discover available project keys if the user doesn't specify one.
+
   Available ovad slash commands for reference:
   - /ovad debug the latest messages - analyze recent channel messages
   - /ovad what services are in &lt;path&gt; in &lt;repo&gt; - query files in a repository
   - /ovad change &lt;setting&gt; to &lt;value&gt; in &lt;file&gt; in &lt;repo&gt; - modify files via PR
   - /ovad read PR #123 in &lt;repo&gt; - analyze a pull request
+  - /ovad create a Jira ticket from this thread - create a Jira issue from conversation content
   - /ovad find usages of &lt;pattern&gt; in &lt;repo&gt; - search code across a repository

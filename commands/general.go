@@ -8,22 +8,30 @@ import (
 	"strings"
 
 	"github.com/justmike1/ovad/github"
+	"github.com/justmike1/ovad/jira"
 	ovadslack "github.com/justmike1/ovad/slack"
 )
 
 const maxToolRounds = 20
 
 type GeneralHandler struct {
-	slackClient     SlackClient
-	ghClient        *github.Client
-	modelsClient    *github.ModelsClient
-	contextProvider *ContextProvider
-	memory          *ConversationMemory
-	prompts         PromptProvider
+	slackClient      SlackClient
+	ghClient         *github.Client
+	modelsClient     *github.ModelsClient
+	jiraClient       *jira.Client
+	contextProvider  *ContextProvider
+	memory           *ConversationMemory
+	prompts          PromptProvider
+	agentID          string
+	appURL           string
+	currentChannelID string
+	currentAuditTS   string
 }
 
 func (h *GeneralHandler) Execute(channelID, userID, text, responseURL, auditTS string) {
 	ctx := context.Background()
+	h.currentChannelID = channelID
+	h.currentAuditTS = auditTS
 
 	tools := h.buildTools()
 
@@ -89,7 +97,7 @@ func (h *GeneralHandler) Execute(channelID, userID, text, responseURL, auditTS s
 
 		for _, tc := range choice.Message.ToolCalls {
 			log.Printf("[user=%s channel=%s] LLM called tool: %s(%s)", userID, channelID, tc.Function.Name, tc.Function.Arguments)
-			result := h.executeTool(ctx, channelID, userID, tc.Function.Name, tc.Function.Arguments)
+			result := h.executeTool(ctx, channelID, userID, auditTS, tc.Function.Name, tc.Function.Arguments)
 			messages = append(messages, github.NewToolResultMessage(tc.ID, result))
 			if tc.Function.Name == "reply_in_thread" && !strings.HasPrefix(result, "Error") {
 				repliedInThread = true
@@ -106,7 +114,7 @@ func (h *GeneralHandler) systemPrompt() string {
 }
 
 func (h *GeneralHandler) buildTools() []github.Tool {
-	return []github.Tool{
+	tools := []github.Tool{
 		{
 			Type: "function",
 			Function: github.ToolFunction{
@@ -304,10 +312,55 @@ func (h *GeneralHandler) buildTools() []github.Tool {
 				}`),
 			},
 		},
+		{
+			Type: "function",
+			Function: github.ToolFunction{
+				Name:        "fetch_thread_context",
+				Description: "Fetch the full conversation from a Slack thread URL. Use this FIRST whenever the user provides a Slack thread/message link (https://...slack.com/archives/...) to read the thread's content before acting on it (e.g., creating a Jira ticket, summarizing, replying). Returns all messages in the thread. The response also includes the channel_id and thread_ts so you can reply_in_thread afterwards.",
+				Parameters: json.RawMessage(`{
+					"type":"object",
+					"properties":{
+						"url":{"type":"string","description":"Slack thread or message URL (e.g. 'https://yourorg.slack.com/archives/C01BS13KFL7/p1771847194296799')"}
+					},
+					"required":["url"]
+				}`),
+			},
+		},
 	}
+
+	// Jira tools are only available when Jira is configured.
+	if h.jiraClient != nil {
+		tools = append(tools, github.Tool{
+			Type: "function",
+			Function: github.ToolFunction{
+				Name:        "create_jira_ticket",
+				Description: "Create a Jira ticket (issue). Use this when the user asks to create a ticket, task, story, or bug from the conversation content (e.g., a test plan, action item, or bug report). Populate the summary and description from the relevant content discussed in the conversation. IMPORTANT: Format the description using markdown — use # for headers, - for bullet lists, 1) for numbered lists, **bold** for emphasis, and `code` for inline code. Structure the ticket professionally with clear sections (e.g., ## Context, ## Scope, ## Acceptance Criteria).",
+				Parameters: json.RawMessage(`{
+					"type":"object",
+					"properties":{
+						"project":{"type":"string","description":"Jira project key (e.g. 'ENG', 'QA'). Optional — uses the configured default if omitted."},
+						"summary":{"type":"string","description":"Short one-line title for the ticket."},
+						"description":{"type":"string","description":"Detailed, well-structured description using markdown formatting. Use ## for section headers, - for bullet points, 1) for numbered steps, **bold** for key terms, and backticks for code references. Organize into clear sections like Context, Scope, Test Plan, Acceptance Criteria, References, etc."},
+						"issue_type":{"type":"string","description":"Issue type: 'Task', 'Bug', 'Story', 'Epic', etc. Default: 'Task'."},
+						"labels":{"type":"array","items":{"type":"string"},"description":"Optional labels to apply to the ticket (e.g. ['qa','automated-test'])."}
+					},
+					"required":["summary","description"]
+				}`),
+			},
+		}, github.Tool{
+			Type: "function",
+			Function: github.ToolFunction{
+				Name:        "list_jira_projects",
+				Description: "List all Jira projects visible to the bot. Use this to discover available project keys before creating a ticket.",
+				Parameters:  json.RawMessage(`{"type":"object","properties":{}}`),
+			},
+		})
+	}
+
+	return tools
 }
 
-func (h *GeneralHandler) executeTool(ctx context.Context, channelID, userID, name, argsJSON string) string {
+func (h *GeneralHandler) executeTool(ctx context.Context, channelID, userID, auditTS, name, argsJSON string) string {
 	switch name {
 	case "list_org_repos":
 		owner, err := h.ghClient.ResolveOwner(ctx)
@@ -645,6 +698,81 @@ func (h *GeneralHandler) executeTool(ctx context.Context, channelID, userID, nam
 		}
 		log.Printf("[user=%s channel=%s] posted thread reply to ts=%s", userID, channelID, args.ThreadTS)
 		return "Successfully posted reply in thread."
+
+	case "fetch_thread_context":
+		var args struct {
+			URL string `json:"url"`
+		}
+		if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+			return fmt.Sprintf("Error parsing arguments: %v", err)
+		}
+		threadChannelID, threadTS, err := ParseSlackThreadURL(args.URL)
+		if err != nil {
+			return fmt.Sprintf("Error parsing Slack thread URL: %v", err)
+		}
+		msgs, err := h.slackClient.FetchThreadReplies(threadChannelID, threadTS, 100)
+		if err != nil {
+			return fmt.Sprintf("Error fetching thread replies: %v", err)
+		}
+		if len(msgs) == 0 {
+			return fmt.Sprintf("No messages found in thread (channel=%s, thread_ts=%s).", threadChannelID, threadTS)
+		}
+		formatted := formatMessages(msgs)
+		log.Printf("[user=%s channel=%s] fetched thread context from %s (%d messages)", userID, channelID, args.URL, len(msgs))
+		return fmt.Sprintf("Thread context (channel_id=%s, thread_ts=%s):\n\n%s", threadChannelID, threadTS, formatted)
+
+	case "create_jira_ticket":
+		if h.jiraClient == nil {
+			return "Error: Jira integration is not configured."
+		}
+		var args struct {
+			Project     string   `json:"project"`
+			Summary     string   `json:"summary"`
+			Description string   `json:"description"`
+			IssueType   string   `json:"issue_type"`
+			Labels      []string `json:"labels"`
+		}
+		if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+			return fmt.Sprintf("Error parsing arguments: %v", err)
+		}
+		// Append agent stamp to the description.
+		stamp := fmt.Sprintf("\n\n---\nCreated by **%s** via Arbetern", h.agentID)
+		if h.appURL != "" {
+			stamp += fmt.Sprintf(" | %s/ui/", h.appURL)
+		}
+		if h.currentChannelID != "" && h.currentAuditTS != "" {
+			if permalink, err := h.slackClient.GetPermalink(h.currentChannelID, h.currentAuditTS); err == nil && permalink != "" {
+				stamp += fmt.Sprintf(" | [Slack message](%s)", permalink)
+			}
+		}
+		args.Description += stamp
+
+		issue, err := h.jiraClient.CreateIssue(jira.CreateIssueInput{
+			Project:     args.Project,
+			Summary:     args.Summary,
+			Description: args.Description,
+			IssueType:   args.IssueType,
+			Labels:      args.Labels,
+		})
+		if err != nil {
+			return fmt.Sprintf("Error creating Jira ticket: %v", err)
+		}
+		log.Printf("[user=%s channel=%s] created Jira ticket %s: %s", userID, channelID, issue.Key, issue.Browse)
+		return fmt.Sprintf("Jira ticket created: *%s* — %s\nSummary: %s", issue.Key, issue.Browse, args.Summary)
+
+	case "list_jira_projects":
+		if h.jiraClient == nil {
+			return "Error: Jira integration is not configured."
+		}
+		projects, err := h.jiraClient.ListProjects()
+		if err != nil {
+			return fmt.Sprintf("Error listing Jira projects: %v", err)
+		}
+		if len(projects) == 0 {
+			return "No Jira projects found."
+		}
+		log.Printf("[user=%s channel=%s] listed %d Jira projects", userID, channelID, len(projects))
+		return fmt.Sprintf("Jira projects (%d):\n%s", len(projects), strings.Join(projects, "\n"))
 
 	default:
 		return fmt.Sprintf("Unknown tool: %s", name)

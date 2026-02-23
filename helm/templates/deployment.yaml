@@ -76,6 +76,30 @@ spec:
                   name: {{ .Values.secretName }}
                   key: azure-api-key
             {{- end }}
+            {{- if index .Values.secretValues "jira-url" }}
+            - name: JIRA_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secretName }}
+                  key: jira-url
+            - name: JIRA_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secretName }}
+                  key: jira-email
+            - name: JIRA_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secretName }}
+                  key: jira-api-token
+            {{- end }}
+            {{- if index .Values.secretValues "jira-project" }}
+            - name: JIRA_PROJECT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secretName }}
+                  key: jira-project
+            {{- end }}
             - name: GOMEMLIMIT
               value: {{ .Values.goRuntime.goMemLimit | quote }}
             - name: GOGC

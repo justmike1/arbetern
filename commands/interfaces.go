@@ -4,8 +4,10 @@ import slacklib "github.com/slack-go/slack"
 
 type SlackClient interface {
 	FetchChannelHistory(channelID string, limit int) ([]slacklib.Message, error)
+	FetchThreadReplies(channelID, threadTS string, limit int) ([]slacklib.Message, error)
 	PostMessage(channelID, text string) (string, error)
 	PostThreadReply(channelID, threadTS, text string) error
+	GetPermalink(channelID, messageTS string) (string, error)
 }
 
 // PromptProvider abstracts access to per-agent prompts.

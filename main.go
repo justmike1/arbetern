@@ -12,6 +12,7 @@ import (
 	"github.com/justmike1/ovad/commands"
 	"github.com/justmike1/ovad/config"
 	"github.com/justmike1/ovad/github"
+	"github.com/justmike1/ovad/jira"
 	"github.com/justmike1/ovad/prompts"
 	ovadslack "github.com/justmike1/ovad/slack"
 )
@@ -27,6 +28,11 @@ func main() {
 
 	slackClient := ovadslack.NewClient(cfg.SlackBotToken)
 
+	teamURL, err := slackClient.GetTeamURL()
+	if err != nil {
+		log.Printf("Warning: could not fetch Slack team URL: %v", err)
+	}
+
 	var ghClient *github.Client
 	if cfg.GitHubToken != "" {
 		ghClient = github.NewClient(cfg.GitHubToken)
@@ -39,6 +45,12 @@ func main() {
 	} else {
 		modelsClient = github.NewModelsClient(cfg.GitHubToken, cfg.GitHubModel)
 		log.Printf("Using GitHub Models backend (model: %s)", cfg.GitHubModel)
+	}
+
+	var jiraClient *jira.Client
+	if cfg.JiraConfigured() {
+		jiraClient = jira.NewClient(cfg.JiraURL, cfg.JiraEmail, cfg.JiraAPIToken, cfg.JiraProject)
+		log.Printf("Jira integration enabled: %s (default project: %s)", cfg.JiraURL, cfg.JiraProject)
 	}
 
 	// Discover agents and register per-agent webhook routes (/<agent>/webhook).
@@ -56,7 +68,7 @@ func main() {
 			log.Fatalf("failed to load prompts for agent %s: %v", agent.ID, err)
 		}
 
-		router := commands.NewRouter(slackClient, ghClient, modelsClient, ap, agent.ID)
+		router := commands.NewRouter(slackClient, ghClient, modelsClient, jiraClient, ap, agent.ID, teamURL)
 		handler := ovadslack.NewHandler(cfg.SlackSigningSecret, router.Handle)
 
 		webhookPath := fmt.Sprintf("/%s/webhook", agent.ID)

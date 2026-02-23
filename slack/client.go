@@ -47,12 +47,45 @@ func (c *Client) PostThreadReply(channelID, threadTS, text string) error {
 	return nil
 }
 
+func (c *Client) FetchThreadReplies(channelID, threadTS string, limit int) ([]slack.Message, error) {
+	msgs, _, _, err := c.api.GetConversationReplies(&slack.GetConversationRepliesParameters{
+		ChannelID: channelID,
+		Timestamp: threadTS,
+		Limit:     limit,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch thread replies: %w", err)
+	}
+	return msgs, nil
+}
+
 func (c *Client) PostEphemeral(channelID, userID, text string) error {
 	_, err := c.api.PostEphemeral(channelID, userID, slack.MsgOptionText(text, false))
 	if err != nil {
 		return fmt.Errorf("failed to post ephemeral message: %w", err)
 	}
 	return nil
+}
+
+// GetPermalink returns the permanent URL for a specific message in a channel.
+func (c *Client) GetPermalink(channelID, messageTS string) (string, error) {
+	permalink, err := c.api.GetPermalink(&slack.PermalinkParameters{
+		Channel: channelID,
+		Ts:      messageTS,
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to get permalink: %w", err)
+	}
+	return permalink, nil
+}
+
+// GetTeamURL returns the Slack workspace URL (e.g. "https://myorg.slack.com/").
+func (c *Client) GetTeamURL() (string, error) {
+	resp, err := c.api.AuthTest()
+	if err != nil {
+		return "", fmt.Errorf("failed to call auth.test: %w", err)
+	}
+	return resp.URL, nil
 }
 
 type webhookPayload struct {
