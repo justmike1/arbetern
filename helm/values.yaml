@@ -1,7 +1,7 @@
 replicaCount: 1
 
 image:
-  repository: ghcr.io/justmike1/ovad
+  repository: ghcr.io/justmike1/arbetern
   pullPolicy: Always
   tag: ""
 
@@ -28,11 +28,11 @@ env:
   PORT: "8080"
   GITHUB_MODEL: "openai/gpt-4o" # options: openai/gpt-4o, meta/llama-3.1-405b-instruct, etc.
 
-secretName: ovad-secrets
+secretName: arbetern-secrets
 
 # Set to true to have the chart create the Secret resource.
 # If false, create the secret externally before installing:
-#   kubectl create secret generic ovad-secrets \
+#   kubectl create secret generic arbetern-secrets \
 #     --from-literal=slack-bot-token=xoxb-... \
 #     --from-literal=slack-signing-secret=... \
 #     --from-literal=github-token=ghp_...
@@ -55,7 +55,7 @@ ingress:
   className: ""
   annotations: {}
   hosts:
-    - host: ovad.example.local
+    - host: arbetern.example.local
       paths:
         - path: /
           pathType: ImplementationSpecific
@@ -68,7 +68,7 @@ httpRoute:
     - name: gateway
       sectionName: http
   hostnames:
-    - ovad.example.local
+    - arbetern.example.local
   rules:
     - matches:
         - path:

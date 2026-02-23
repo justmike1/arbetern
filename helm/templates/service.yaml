@@ -1,9 +1,9 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "ovad.fullname" . }}
+  name: {{ include "arbetern.fullname" . }}
   labels:
-    {{- include "ovad.labels" . | nindent 4 }}
+    {{- include "arbetern.labels" . | nindent 4 }}
 spec:
   type: {{ .Values.service.type }}
   ports:
@@ -12,4 +12,4 @@ spec:
       protocol: TCP
       name: http
   selector:
-    {{- include "ovad.selectorLabels" . | nindent 4 }}
+    {{- include "arbetern.selectorLabels" . | nindent 4 }}

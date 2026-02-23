@@ -2,14 +2,14 @@
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: {{ include "ovad.fullname" . }}
+  name: {{ include "arbetern.fullname" . }}
   labels:
-    {{- include "ovad.labels" . | nindent 4 }}
+    {{- include "arbetern.labels" . | nindent 4 }}
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: {{ include "ovad.fullname" . }}
+    name: {{ include "arbetern.fullname" . }}
   minReplicas: {{ .Values.autoscaling.minReplicas }}
   maxReplicas: {{ .Values.autoscaling.maxReplicas }}
   metrics:

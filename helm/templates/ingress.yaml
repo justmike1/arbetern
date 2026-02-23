@@ -2,9 +2,9 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ include "ovad.fullname" . }}
+  name: {{ include "arbetern.fullname" . }}
   labels:
-    {{- include "ovad.labels" . | nindent 4 }}
+    {{- include "arbetern.labels" . | nindent 4 }}
   {{- with .Values.ingress.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
@@ -35,7 +35,7 @@ spec:
             {{- end }}
             backend:
               service:
-                name: {{ include "ovad.fullname" $ }}
+                name: {{ include "arbetern.fullname" $ }}
                 port:
                   number: {{ $.Values.service.port }}
           {{- end }}
