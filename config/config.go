@@ -19,6 +19,7 @@ type Config struct {
 	AzureEndpoint      string
 	AzureAPIKey        string
 	Port               string
+	UIAllowedCIDRs     string
 }
 
 // UseAzure returns true when Azure OpenAI credentials are configured.
@@ -35,6 +36,7 @@ func Load() (*Config, error) {
 		AzureEndpoint:      os.Getenv("AZURE_OPEN_AI_ENDPOINT"),
 		AzureAPIKey:        os.Getenv("AZURE_API_KEY"),
 		Port:               os.Getenv("PORT"),
+		UIAllowedCIDRs:     os.Getenv("UI_ALLOWED_CIDRS"),
 	}
 
 	if cfg.SlackBotToken == "" {

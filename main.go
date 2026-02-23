@@ -68,9 +68,10 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	// Agent management UI (embedded static files).
+	// Agent management UI (embedded static files) — behind IP whitelist if configured.
 	uiContent, _ := fs.Sub(uiFS, "ui")
-	http.Handle("/ui/", http.StripPrefix("/ui/", http.FileServer(http.FS(uiContent))))
+	uiHandler := ipWhitelist(cfg.UIAllowedCIDRs, http.StripPrefix("/ui/", http.FileServer(http.FS(uiContent))))
+	http.Handle("/ui/", uiHandler)
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" {
 			http.Redirect(w, r, "/ui/", http.StatusFound)
@@ -80,7 +81,8 @@ func main() {
 	})
 
 	// API: list agents with their prompts (read-only, discovered from agents/ directory).
-	http.HandleFunc("/api/agents", func(w http.ResponseWriter, r *http.Request) {
+	apiMux := http.NewServeMux()
+	apiMux.HandleFunc("/api/agents", func(w http.ResponseWriter, r *http.Request) {
 		agents, err := prompts.DiscoverAgents("")
 		if err != nil {
 			http.Error(w, fmt.Sprintf("failed to discover agents: %v", err), http.StatusInternalServerError)
@@ -91,7 +93,7 @@ func main() {
 	})
 
 	// API: UI settings.
-	http.HandleFunc("/api/settings", func(w http.ResponseWriter, r *http.Request) {
+	apiMux.HandleFunc("/api/settings", func(w http.ResponseWriter, r *http.Request) {
 		headerTitle := os.Getenv("UI_HEADER")
 		if headerTitle == "" {
 			headerTitle = "arbetern"
@@ -99,6 +101,7 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]string{"header": headerTitle})
 	})
+	http.Handle("/api/", ipWhitelist(cfg.UIAllowedCIDRs, apiMux))
 
 	log.Printf("arbetern server starting on :%s", cfg.Port)
 	if err := http.ListenAndServe(":"+cfg.Port, nil); err != nil {
