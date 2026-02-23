@@ -83,12 +83,16 @@ func formatMessages(messages []slacklib.Message) string {
 		if sender == "" && msg.Username != "" {
 			sender = msg.Username
 		}
-		if sender == "" && msg.BotID != "" {
+		isBot := msg.BotID != ""
+		if sender == "" && isBot {
 			sender = "bot:" + msg.BotID
 		}
 		label := ""
 		if idx == 1 {
 			label = " [LATEST]"
+		}
+		if isBot {
+			label += " [BOT]"
 		}
 		fmt.Fprintf(&sb, "Message %d%s [%s @%s] (thread_ts=%s): %s\n", idx, label, ts, sender, msg.Timestamp, text)
 		idx++

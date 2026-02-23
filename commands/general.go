@@ -47,6 +47,8 @@ func (h *GeneralHandler) Execute(channelID, userID, text, responseURL string) {
 		github.NewChatMessage("user", text),
 	}
 
+	repliedInThread := false
+
 	for i := 0; i < maxToolRounds; i++ {
 		resp, err := h.modelsClient.CompleteWithTools(ctx, messages, tools)
 		if err != nil {
@@ -66,6 +68,11 @@ func (h *GeneralHandler) Execute(channelID, userID, text, responseURL string) {
 		if len(choice.Message.ToolCalls) == 0 {
 			log.Printf("[user=%s channel=%s] general query completed successfully", userID, channelID)
 			h.memory.SetAssistantResponse(channelID, userID, choice.Message.Content)
+			// If we already replied in a thread, don't send a redundant follow-up message.
+			if repliedInThread {
+				log.Printf("[user=%s channel=%s] skipping response_url reply (already replied in thread)", userID, channelID)
+				return
+			}
 			if err := ovadslack.RespondToURL(responseURL, choice.Message.Content, false); err != nil {
 				log.Printf("[user=%s channel=%s] failed to post general response: %v", userID, channelID, err)
 			}
@@ -81,6 +88,9 @@ func (h *GeneralHandler) Execute(channelID, userID, text, responseURL string) {
 			log.Printf("[user=%s channel=%s] LLM called tool: %s(%s)", userID, channelID, tc.Function.Name, tc.Function.Arguments)
 			result := h.executeTool(ctx, channelID, userID, tc.Function.Name, tc.Function.Arguments)
 			messages = append(messages, github.NewToolResultMessage(tc.ID, result))
+			if tc.Function.Name == "reply_in_thread" && !strings.HasPrefix(result, "Error") {
+				repliedInThread = true
+			}
 		}
 	}
 
@@ -266,11 +276,11 @@ func (h *GeneralHandler) buildTools() []github.Tool {
 			Type: "function",
 			Function: github.ToolFunction{
 				Name:        "reply_in_thread",
-				Description: "Post a message as a threaded reply to a specific Slack message. Use this when the user asks you to reply inside someone's thread or respond to a particular message. You need the thread_ts of the target message, which you can find in the channel context output (each message includes a thread_ts value).",
+				Description: "Post a message as a threaded reply to a specific Slack message. Use this when the user asks you to reply inside someone's thread or respond to a particular message. You need the thread_ts of the target message from the channel context. IMPORTANT: Messages marked [BOT] are this bot's own messages — never reply to those. Always use the thread_ts of the HUMAN user's message (e.g. the person mentioned by name like 'Shahar', 'John', etc.).",
 				Parameters: json.RawMessage(`{
 					"type":"object",
 					"properties":{
-						"thread_ts":{"type":"string","description":"The thread_ts timestamp of the message to reply to (e.g., '1708700000.123456'). Get this from the channel context."},
+						"thread_ts":{"type":"string","description":"The thread_ts timestamp of the target human user's message to reply to. MUST be from a non-[BOT] message. Get this from the channel context."},
 						"text":{"type":"string","description":"The message text to post as a threaded reply. Supports Slack markdown formatting."}
 					},
 					"required":["thread_ts","text"]
