@@ -20,18 +20,18 @@ type DebugHandler struct {
 	prompts         PromptProvider
 }
 
-func (h *DebugHandler) Execute(channelID, userID, text, responseURL string) {
+func (h *DebugHandler) Execute(channelID, userID, text, responseURL, auditTS string) {
 	ctx := context.Background()
 
 	channelContext, err := h.contextProvider.GetFreshChannelContext(channelID)
 	if err != nil {
 		log.Printf("[user=%s channel=%s] failed to fetch channel context: %v", userID, channelID, err)
-		_ = ovadslack.RespondToURL(responseURL, fmt.Sprintf("Failed to read channel history: %v", err), true)
+		h.reply(channelID, responseURL, auditTS, fmt.Sprintf("Failed to read channel history: %v", err))
 		return
 	}
 
 	if channelContext == "(no recent messages)" || channelContext == "(no recent messages with content)" {
-		_ = ovadslack.RespondToURL(responseURL, "No messages found in this channel to analyze.", true)
+		h.reply(channelID, responseURL, auditTS, "No messages found in this channel to analyze.")
 		return
 	}
 
@@ -53,8 +53,18 @@ func (h *DebugHandler) Execute(channelID, userID, text, responseURL string) {
 
 	log.Printf("[user=%s channel=%s] debug analysis completed successfully", userID, channelID)
 	h.memory.SetAssistantResponse(channelID, userID, response)
-	if err := ovadslack.RespondToURL(responseURL, response, false); err != nil {
-		log.Printf("[user=%s channel=%s] failed to post debug response: %v", userID, channelID, err)
+	h.reply(channelID, responseURL, auditTS, response)
+}
+
+func (h *DebugHandler) reply(channelID, responseURL, auditTS, text string) {
+	if auditTS != "" {
+		if err := h.slackClient.PostThreadReply(channelID, auditTS, text); err != nil {
+			log.Printf("[channel=%s] failed to post thread reply: %v", channelID, err)
+		}
+		return
+	}
+	if err := ovadslack.RespondToURL(responseURL, text, false); err != nil {
+		log.Printf("[channel=%s] failed to respond: %v", channelID, err)
 	}
 }
 

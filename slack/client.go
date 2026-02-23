@@ -31,12 +31,12 @@ func (c *Client) FetchChannelHistory(channelID string, limit int) ([]slack.Messa
 	return resp.Messages, nil
 }
 
-func (c *Client) PostMessage(channelID, text string) error {
-	_, _, err := c.api.PostMessage(channelID, slack.MsgOptionText(text, false))
+func (c *Client) PostMessage(channelID, text string) (string, error) {
+	_, ts, err := c.api.PostMessage(channelID, slack.MsgOptionText(text, false))
 	if err != nil {
-		return fmt.Errorf("failed to post message: %w", err)
+		return "", fmt.Errorf("failed to post message: %w", err)
 	}
-	return nil
+	return ts, nil
 }
 
 func (c *Client) PostThreadReply(channelID, threadTS, text string) error {

@@ -42,7 +42,8 @@ func (r *Router) Handle(channelID, userID, text, responseURL string) {
 	log.Printf("[agent=%s user=%s channel=%s] received command: %s", r.agentID, userID, channelID, text)
 
 	auditMsg := fmt.Sprintf(":mag: <@%s> requested in <#%s> (agent: %s):\n> %s", userID, channelID, r.agentID, text)
-	if err := r.slackClient.PostMessage(channelID, auditMsg); err != nil {
+	auditTS, err := r.slackClient.PostMessage(channelID, auditMsg)
+	if err != nil {
 		log.Printf("[agent=%s user=%s channel=%s] failed to post audit message: %v", r.agentID, userID, channelID, err)
 	}
 
@@ -55,7 +56,11 @@ func (r *Router) Handle(channelID, userID, text, responseURL string) {
 	switch {
 	case isIntroIntent(lower):
 		log.Printf("[user=%s channel=%s] routed to: intro", userID, channelID)
-		_ = ovadslack.RespondToURL(responseURL, r.prompts.MustGet("intro"), false)
+		if auditTS != "" {
+			_ = r.slackClient.PostThreadReply(channelID, auditTS, r.prompts.MustGet("intro"))
+		} else {
+			_ = ovadslack.RespondToURL(responseURL, r.prompts.MustGet("intro"), false)
+		}
 		return
 
 	case isDebugIntent(lower):
@@ -68,12 +73,12 @@ func (r *Router) Handle(channelID, userID, text, responseURL string) {
 			memory:          r.memory,
 			prompts:         r.prompts,
 		}
-		handler.Execute(channelID, userID, text, responseURL)
+		handler.Execute(channelID, userID, text, responseURL, auditTS)
 
 	default:
 		log.Printf("[user=%s channel=%s] routed to: general handler", userID, channelID)
 		handler := &GeneralHandler{slackClient: r.slackClient, ghClient: r.ghClient, modelsClient: r.modelsClient, contextProvider: r.contextProvider, memory: r.memory, prompts: r.prompts}
-		handler.Execute(channelID, userID, text, responseURL)
+		handler.Execute(channelID, userID, text, responseURL, auditTS)
 	}
 }
 

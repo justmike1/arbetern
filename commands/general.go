@@ -22,7 +22,7 @@ type GeneralHandler struct {
 	prompts         PromptProvider
 }
 
-func (h *GeneralHandler) Execute(channelID, userID, text, responseURL string) {
+func (h *GeneralHandler) Execute(channelID, userID, text, responseURL, auditTS string) {
 	ctx := context.Background()
 
 	tools := h.buildTools()
@@ -40,6 +40,11 @@ func (h *GeneralHandler) Execute(channelID, userID, text, responseURL string) {
 	}
 	if channelContext != "" && channelContext != "(no recent messages)" {
 		systemMsg += fmt.Sprintf("\n\nRecent channel messages for context:\n%s", channelContext)
+
+		// Proactively fetch workflow run logs from any GitHub Actions URLs found in channel context.
+		if workflowLogs := h.fetchWorkflowLogs(ctx, channelContext+"\n"+text, userID, channelID); workflowLogs != "" {
+			systemMsg += fmt.Sprintf("\n\nGitHub Actions workflow run details and logs (auto-fetched from URLs found in channel messages):\n\n%s", workflowLogs)
+		}
 	}
 
 	messages := []github.ChatMessage{
@@ -53,13 +58,13 @@ func (h *GeneralHandler) Execute(channelID, userID, text, responseURL string) {
 		resp, err := h.modelsClient.CompleteWithTools(ctx, messages, tools)
 		if err != nil {
 			log.Printf("[user=%s channel=%s] LLM completion failed for general query: %v", userID, channelID, err)
-			_ = ovadslack.RespondToURL(responseURL, fmt.Sprintf("Failed to process request: %v", err), true)
+			h.replyDefault(channelID, responseURL, auditTS, fmt.Sprintf("Failed to process request: %v", err))
 			return
 		}
 
 		if len(resp.Choices) == 0 {
 			log.Printf("[user=%s channel=%s] LLM returned no choices", userID, channelID)
-			_ = ovadslack.RespondToURL(responseURL, "No response from the model.", true)
+			h.replyDefault(channelID, responseURL, auditTS, "No response from the model.")
 			return
 		}
 
@@ -68,14 +73,12 @@ func (h *GeneralHandler) Execute(channelID, userID, text, responseURL string) {
 		if len(choice.Message.ToolCalls) == 0 {
 			log.Printf("[user=%s channel=%s] general query completed successfully", userID, channelID)
 			h.memory.SetAssistantResponse(channelID, userID, choice.Message.Content)
-			// If we already replied in a thread, don't send a redundant follow-up message.
+			// If we already replied in a specific thread, don't send a redundant follow-up.
 			if repliedInThread {
-				log.Printf("[user=%s channel=%s] skipping response_url reply (already replied in thread)", userID, channelID)
+				log.Printf("[user=%s channel=%s] skipping reply (already replied in thread)", userID, channelID)
 				return
 			}
-			if err := ovadslack.RespondToURL(responseURL, choice.Message.Content, false); err != nil {
-				log.Printf("[user=%s channel=%s] failed to post general response: %v", userID, channelID, err)
-			}
+			h.replyDefault(channelID, responseURL, auditTS, choice.Message.Content)
 			return
 		}
 
@@ -95,7 +98,7 @@ func (h *GeneralHandler) Execute(channelID, userID, text, responseURL string) {
 	}
 
 	log.Printf("[user=%s channel=%s] exceeded max tool rounds", userID, channelID)
-	_ = ovadslack.RespondToURL(responseURL, "The request required too many steps. Please try a simpler query.", true)
+	h.replyDefault(channelID, responseURL, auditTS, "The request required too many steps. Please try a simpler query.")
 }
 
 func (h *GeneralHandler) systemPrompt() string {
@@ -269,6 +272,20 @@ func (h *GeneralHandler) buildTools() []github.Tool {
 						"query":{"type":"string","description":"Code search query. Can include the code pattern to find (e.g., 'db.session', 'SessionLocal()', 'def create_session'). Supports GitHub code search qualifiers like 'language:python', 'path:src/', 'extension:py'."}
 					},
 					"required":["repo","query"]
+				}`),
+			},
+		},
+		{
+			Type: "function",
+			Function: github.ToolFunction{
+				Name:        "get_workflow_run",
+				Description: "Fetch details and logs for a GitHub Actions workflow run. Use this PROACTIVELY whenever you see a failed CI/CD notification, a GitHub Actions URL, or the user mentions a build/deploy/pipeline failure. Returns the run status, jobs, steps, annotations, and actual log output for any failed jobs so you can diagnose the root cause.",
+				Parameters: json.RawMessage(`{
+					"type":"object",
+					"properties":{
+						"url":{"type":"string","description":"Full GitHub Actions workflow run URL (e.g., 'https://github.com/org/repo/actions/runs/12345'). Extract this from channel context messages — look for 'View Workflow Run' button URLs or similar links."}
+					},
+					"required":["url"]
 				}`),
 			},
 		},
@@ -595,6 +612,26 @@ func (h *GeneralHandler) executeTool(ctx context.Context, channelID, userID, nam
 		log.Printf("[user=%s channel=%s] searched code in %s for '%s' (%d matches)", userID, channelID, args.Repo, args.Query, len(results))
 		return sb.String()
 
+	case "get_workflow_run":
+		var args struct {
+			URL string `json:"url"`
+		}
+		if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+			return fmt.Sprintf("Error parsing arguments: %v", err)
+		}
+		owner, repo, runID, err := github.ParseWorkflowRunURL(args.URL)
+		if err != nil {
+			return fmt.Sprintf("Error parsing workflow run URL: %v", err)
+		}
+		log.Printf("[user=%s channel=%s] fetching workflow run %s/%s/%d", userID, channelID, owner, repo, runID)
+		summary, err := h.ghClient.GetWorkflowRunSummary(ctx, owner, repo, runID)
+		if err != nil {
+			return fmt.Sprintf("Error fetching workflow run: %v", err)
+		}
+		result := github.FormatWorkflowRunSummary(summary)
+		log.Printf("[user=%s channel=%s] fetched workflow run %s/%s/%d (conclusion: %s)", userID, channelID, owner, repo, runID, summary.Conclusion)
+		return result
+
 	case "reply_in_thread":
 		var args struct {
 			ThreadTS string `json:"thread_ts"`
@@ -611,5 +648,48 @@ func (h *GeneralHandler) executeTool(ctx context.Context, channelID, userID, nam
 
 	default:
 		return fmt.Sprintf("Unknown tool: %s", name)
+	}
+}
+
+func (h *GeneralHandler) fetchWorkflowLogs(ctx context.Context, text, userID, channelID string) string {
+	urls := github.ExtractWorkflowRunURLs(text)
+	if len(urls) == 0 {
+		return ""
+	}
+
+	seen := make(map[string]bool)
+	var result string
+	for _, u := range urls {
+		if seen[u] {
+			continue
+		}
+		seen[u] = true
+
+		owner, repo, runID, err := github.ParseWorkflowRunURL(u)
+		if err != nil {
+			continue
+		}
+
+		log.Printf("[user=%s channel=%s] auto-fetching workflow run %s/%s/%d", userID, channelID, owner, repo, runID)
+		summary, err := h.ghClient.GetWorkflowRunSummary(ctx, owner, repo, runID)
+		if err != nil {
+			log.Printf("[user=%s channel=%s] failed to fetch workflow run summary: %v", userID, channelID, err)
+			continue
+		}
+
+		result += github.FormatWorkflowRunSummary(summary)
+	}
+	return result
+}
+
+func (h *GeneralHandler) replyDefault(channelID, responseURL, auditTS, text string) {
+	if auditTS != "" {
+		if err := h.slackClient.PostThreadReply(channelID, auditTS, text); err != nil {
+			log.Printf("[channel=%s] failed to post thread reply: %v", channelID, err)
+		}
+		return
+	}
+	if err := ovadslack.RespondToURL(responseURL, text, false); err != nil {
+		log.Printf("[channel=%s] failed to respond: %v", channelID, err)
 	}
 }

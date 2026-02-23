@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"io"
+	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
@@ -437,6 +439,7 @@ type WorkflowJobSummary struct {
 	Status     string
 	Conclusion string
 	Steps      []WorkflowStepSummary
+	LogContent string // Populated for failed jobs only.
 }
 
 type WorkflowStepSummary struct {
@@ -484,6 +487,15 @@ func (c *Client) GetWorkflowRunSummary(ctx context.Context, owner, repo string, 
 				Conclusion: step.GetConclusion(),
 			})
 		}
+
+		// Fetch actual log output for failed jobs.
+		if job.GetConclusion() == "failure" {
+			logContent, logErr := c.getJobLogs(ctx, owner, repo, job.GetID())
+			if logErr == nil {
+				js.LogContent = logContent
+			}
+		}
+
 		summary.Jobs = append(summary.Jobs, js)
 
 		checkRunID := parseCheckRunID(job.GetCheckRunURL())
@@ -522,6 +534,34 @@ func parseCheckRunID(checkRunURL string) int64 {
 	return id
 }
 
+const maxJobLogSize = 16000
+
+// getJobLogs downloads the plain-text log for a specific job run.
+func (c *Client) getJobLogs(ctx context.Context, owner, repo string, jobID int64) (string, error) {
+	logURL, _, err := c.api.Actions.GetWorkflowJobLogs(ctx, owner, repo, jobID, 2)
+	if err != nil {
+		return "", fmt.Errorf("failed to get log URL for job %d: %w", jobID, err)
+	}
+
+	resp, err := http.Get(logURL.String())
+	if err != nil {
+		return "", fmt.Errorf("failed to download job logs: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxJobLogSize+1))
+	if err != nil {
+		return "", fmt.Errorf("failed to read job logs: %w", err)
+	}
+
+	content := string(body)
+	if len(content) > maxJobLogSize {
+		// Keep the tail — the error is usually at the end.
+		content = "... (log truncated, showing last portion) ...\n" + content[len(content)-maxJobLogSize:]
+	}
+	return content, nil
+}
+
 func FormatWorkflowRunSummary(s *WorkflowRunSummary) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Workflow Run: %s (ID: %d)\n", s.Name, s.RunID)
@@ -556,6 +596,12 @@ func FormatWorkflowRunSummary(s *WorkflowRunSummary) string {
 				fmt.Fprintf(&sb, "    Title: %s\n", ann.Title)
 			}
 			fmt.Fprintf(&sb, "    Message: %s\n", ann.Message)
+		}
+	}
+
+	for _, job := range s.Jobs {
+		if job.LogContent != "" {
+			fmt.Fprintf(&sb, "\n--- Logs for failed job '%s' ---\n%s\n", job.Name, job.LogContent)
 		}
 	}
 

@@ -2,6 +2,7 @@ package commands
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -107,13 +108,13 @@ func extractMessageContent(msg slacklib.Message) string {
 	var parts []string
 
 	if msg.Text != "" {
-		parts = append(parts, msg.Text)
+		parts = append(parts, expandSlackLinks(msg.Text))
 	}
 
 	for _, att := range msg.Attachments {
 		var attParts []string
 		if att.Pretext != "" {
-			attParts = append(attParts, att.Pretext)
+			attParts = append(attParts, expandSlackLinks(att.Pretext))
 		}
 		if att.Title != "" {
 			title := att.Title
@@ -123,7 +124,7 @@ func extractMessageContent(msg slacklib.Message) string {
 			attParts = append(attParts, title)
 		}
 		if att.Text != "" {
-			attParts = append(attParts, att.Text)
+			attParts = append(attParts, expandSlackLinks(att.Text))
 		}
 		for _, f := range att.Fields {
 			attParts = append(attParts, f.Title+": "+f.Value)
@@ -135,7 +136,7 @@ func extractMessageContent(msg slacklib.Message) string {
 		}
 		attParts = append(attParts, extractBlockURLs(att.Blocks.BlockSet)...)
 		if len(attParts) == 0 && att.Fallback != "" {
-			attParts = append(attParts, att.Fallback)
+			attParts = append(attParts, expandSlackLinks(att.Fallback))
 		}
 		if len(attParts) > 0 {
 			parts = append(parts, strings.Join(attParts, "\n"))
@@ -187,4 +188,20 @@ func tsToTime(ts string) (time.Time, error) {
 		sec = sec*10 + int64(c-'0')
 	}
 	return time.Unix(sec, 0), nil
+}
+
+var slackLinkRe = regexp.MustCompile(`<(https?://[^|>]+)(?:\|[^>]*)?>`)
+
+// expandSlackLinks replaces Slack mrkdwn links like <https://url|label> with "label: https://url"
+// and bare <https://url> with just the URL, so workflow-run URLs become visible for extraction.
+func expandSlackLinks(text string) string {
+	return slackLinkRe.ReplaceAllStringFunc(text, func(match string) string {
+		inner := match[1 : len(match)-1] // strip < >
+		if idx := strings.Index(inner, "|"); idx >= 0 {
+			url := inner[:idx]
+			label := inner[idx+1:]
+			return label + ": " + url
+		}
+		return inner
+	})
 }
