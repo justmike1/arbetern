@@ -48,11 +48,12 @@ func (h *GeneralHandler) Execute(channelID, userID, text, responseURL, auditTS s
 	}
 	if channelContext != "" && channelContext != "(no recent messages)" {
 		systemMsg += fmt.Sprintf("\n\nRecent channel messages for context:\n%s", channelContext)
+	}
 
-		// Proactively fetch workflow run logs from any GitHub Actions URLs found in channel context.
-		if workflowLogs := h.fetchWorkflowLogs(ctx, channelContext+"\n"+text, userID, channelID); workflowLogs != "" {
-			systemMsg += fmt.Sprintf("\n\nGitHub Actions workflow run details and logs (auto-fetched from URLs found in channel messages):\n\n%s", workflowLogs)
-		}
+	// Proactively fetch workflow run logs from GitHub Actions URLs found in the user's message
+	// (not channel context — channel context may contain unrelated CI notifications).
+	if workflowLogs := h.fetchWorkflowLogs(ctx, text, userID, channelID); workflowLogs != "" {
+		systemMsg += fmt.Sprintf("\n\nGitHub Actions workflow run details and logs (auto-fetched from URLs found in your message):\n\n%s", workflowLogs)
 	}
 
 	messages := []github.ChatMessage{
