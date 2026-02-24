@@ -85,6 +85,7 @@ Classic API tokens inherit **all** permissions of the account, so using a person
    |---|---|---|
    | `BROWSE_PROJECTS` | Browse Projects | List projects and view project metadata |
    | `CREATE_ISSUES` | Create Issues | Create new tickets via the API |
+   | `EDIT_ISSUES` | Edit Issues | Update ticket descriptions and summaries (used by Seihin agent) |
 
 3. **Generate the API token** from the service account:
    - Log in as the service account at [id.atlassian.com](https://id.atlassian.com/manage-profile/security/api-tokens).
@@ -95,14 +96,21 @@ Classic API tokens inherit **all** permissions of the account, so using a person
 
 ## Usage
 
-Once configured, the bot exposes two tools to the LLM:
+Once configured, the bot exposes the following Jira tools to the LLM:
 
-- **create_jira_ticket** — create an issue with summary, description, type, and labels
-- **list_jira_projects** — discover available project keys
+| Tool | Description |
+|---|---|
+| **create_jira_ticket** | Create an issue with summary, description, type, labels, assignee, and team |
+| **list_jira_projects** | Discover available project keys |
+| **search_jira_issues** | Search for issues using JQL (e.g., find all in-progress tickets for a user) |
+| **get_jira_issue** | Fetch full details of a specific issue by key (including description) |
+| **update_jira_issue** | Update an issue's summary and/or description |
 
 Example Slack commands:
 
 ```
-/arbetern create a Jira ticket from the test plan above
-/arbetern open a bug in project QA for the login timeout issue
+/ovad create a Jira ticket from the test plan above
+/ovad open a bug in project QA for the login timeout issue
+/seihin go over my jira tickets in progress and edit and redefine the description and its details
+/seihin review ticket ENG-123 and improve its description
 ```

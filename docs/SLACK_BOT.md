@@ -24,16 +24,17 @@
 | `commands` | Register and receive slash commands |
 | `channels:history` | Read messages from public channels |
 | `chat:write` | Post responses to channels |
+| `users:read` | Resolve Slack user IDs to real names (used by agents like Seihin to look up the user's identity for Jira queries) |
 
 ## Step 3: Create the Slash Command
 
 1. In the left sidebar, go to **Slash Commands**
 2. Click **Create New Command**
 3. Fill in:
-   - **Command:** `/ovad` (or whatever you want the agent's slash command to be)
+   - **Command:** `/ovad` (or your agent's name, e.g. `/seihin`, `/agent-q`)
    - **Request URL:** `https://<your-server>/<agent-name>/webhook` (e.g. `https://ai.example.com/ovad/webhook`)
-   - **Short Description:** `AI-powered DevOps assistant`
-   - **Usage Hint:** `[debug latest message | add env var KEY=VALUE in file.tf in repo-name repository]`
+   - **Short Description:** `AI-powered assistant` (adjust per agent)
+   - **Usage Hint:** `[your agent-specific usage hint]`
 4. Click **Save**
 
 > **Multi-agent setup:** Create a separate Slack app (or slash command) for each agent, each pointing to its own `/<agent>/webhook` path.

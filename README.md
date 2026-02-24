@@ -9,6 +9,8 @@ An orchestration platform for AI agents in the enterprise. Each agent lives in i
 | Agent | Profession | Description |
 |---|---|---|
 | **ovad** | DevOps & SRE Engineer | Debugs CI/CD failures, reads/modifies repo files, opens PRs — all from a Slack slash command |
+| **agent-q** | QA & Test Engineer | Analyzes test failures, reviews test coverage, suggests test cases, and triages flaky tests |
+| **seihin** (製品) | Sr. Technical Product Manager | Reviews and refines Jira tickets, rewrites descriptions with PM best practices, manages ticket quality at scale |
 
 ## Quick Start
 
@@ -30,6 +32,12 @@ An orchestration platform for AI agents in the enterprise. Each agent lives in i
 | `AZURE_OPEN_AI_ENDPOINT` | no | Azure OpenAI endpoint URL |
 | `AZURE_API_KEY` | no | Azure OpenAI API key |
 | `PORT` | no | HTTP port (default: `8080`) |
+| `JIRA_URL` | no | Jira instance URL (e.g. `https://yourorg.atlassian.net`) |
+| `JIRA_EMAIL` | no | Jira service account email |
+| `JIRA_API_TOKEN` | no | Jira API token |
+| `JIRA_PROJECT` | no | Default Jira project key (e.g. `ENG`) |
+| `APP_URL` | no | Public app URL (used for Jira ticket stamps) |
+| `UI_ALLOWED_CIDRS` | no | Comma-separated CIDRs allowed to access the UI |
 | `PROMPTS_FILE` | no | Path to prompts YAML (default: per-agent `agents/<name>/prompts.yaml`) |
 | `AGENTS_DIR` | no | Path to agents directory (default: `agents`) |
 | `UI_HEADER` | no | Custom header text for the web UI (default: `arbetern`) |
@@ -81,17 +89,33 @@ Visit `/ui/` to see all registered agents. Click an agent card to view its promp
 main.go              # entrypoint, HTTP server, API
 agents/              # agent definitions (one directory per agent)
   ovad/
-    prompts.yaml     # ovad system prompts
+    prompts.yaml     # DevOps & SRE agent prompts
+  agent-q/
+    prompts.yaml     # QA & Test Engineering agent prompts
+  seihin/
+    prompts.yaml     # Sr. Technical Product Manager agent prompts
+  prompts.yaml       # global prompts shared by all agents (e.g. security)
 config/              # env var loading
 commands/            # intent routing, debug/general handlers
 github/              # GitHub API client + Models/Azure API client
+jira/                # Jira Cloud REST API client
 slack/               # Slack webhook handler + response helpers
 prompts/             # YAML prompt loader + agent discovery
 ui/                  # embedded web UI (agent manager)
 helm/                # Helm chart
-docs/                # setup guides (Slack, GitHub PAT)
+docs/                # setup guides (Slack, GitHub PAT, Jira)
 ```
 
 ## Customizing Prompts
 
-Edit `agents/ovad/prompts.yaml` to change LLM behavior without recompiling. Keys: `intro`, `security`, `classifier`, `debug`, `general`.
+Edit any `agents/<name>/prompts.yaml` to change LLM behavior without recompiling. Keys: `intro`, `security`, `classifier`, `debug`, `general`.
+
+Global prompts (e.g. `security`) are defined in `agents/prompts.yaml` and inherited by all agents. Agent-specific prompts override globals.
+
+## Integrations
+
+| Integration | Documentation | Required By |
+|---|---|---|
+| Slack | [docs/SLACK_BOT.md](docs/SLACK_BOT.md) | All agents |
+| GitHub | [docs/GITHUB_PAT.md](docs/GITHUB_PAT.md) | ovad, agent-q |
+| Jira | [docs/JIRA.md](docs/JIRA.md) | seihin, ovad, agent-q |
