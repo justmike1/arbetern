@@ -79,6 +79,15 @@ func (c *Client) GetPermalink(channelID, messageTS string) (string, error) {
 	return permalink, nil
 }
 
+// GetUserInfo returns profile information for a Slack user by their user ID.
+func (c *Client) GetUserInfo(userID string) (*slack.User, error) {
+	user, err := c.api.GetUserInfo(userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user info: %w", err)
+	}
+	return user, nil
+}
+
 // GetTeamURL returns the Slack workspace URL (e.g. "https://myorg.slack.com/").
 func (c *Client) GetTeamURL() (string, error) {
 	resp, err := c.api.AuthTest()

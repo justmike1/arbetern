@@ -1079,6 +1079,243 @@ func (c *Client) parseTeamsResponse(data []byte) []normalizedTeam {
 }
 
 // UpdateIssueFields sets arbitrary fields on an existing Jira issue.
+// SearchIssuesJQL searches for issues using JQL and returns a formatted summary.
+func (c *Client) SearchIssuesJQL(jql string, maxResults int) ([]IssueSummary, error) {
+	if maxResults <= 0 {
+		maxResults = 20
+	}
+	searchURL := fmt.Sprintf("%s/rest/api/3/search/jql?jql=%s&maxResults=%d&fields=summary,status,assignee,priority,issuetype,updated,description",
+		c.baseURL, url.QueryEscape(jql), maxResults)
+
+	req, err := http.NewRequest(http.MethodGet, searchURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.SetBasicAuth(c.email, c.apiToken)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("send request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("jira API error (HTTP %d): %s", resp.StatusCode, string(respBody))
+	}
+
+	var result struct {
+		Total  int `json:"total"`
+		Issues []struct {
+			Key    string `json:"key"`
+			Fields struct {
+				Summary     string                        `json:"summary"`
+				Status      struct{ Name string }         `json:"status"`
+				Assignee    *struct{ DisplayName string } `json:"assignee"`
+				Priority    *struct{ Name string }        `json:"priority"`
+				IssueType   struct{ Name string }         `json:"issuetype"`
+				Updated     string                        `json:"updated"`
+				Description json.RawMessage               `json:"description"`
+			} `json:"fields"`
+		} `json:"issues"`
+	}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("unmarshal response: %w", err)
+	}
+
+	issues := make([]IssueSummary, 0, len(result.Issues))
+	for _, i := range result.Issues {
+		assignee := ""
+		if i.Fields.Assignee != nil {
+			assignee = i.Fields.Assignee.DisplayName
+		}
+		priority := ""
+		if i.Fields.Priority != nil {
+			priority = i.Fields.Priority.Name
+		}
+		desc := adfToPlainText(i.Fields.Description)
+		issues = append(issues, IssueSummary{
+			Key:         i.Key,
+			Summary:     i.Fields.Summary,
+			Status:      i.Fields.Status.Name,
+			Assignee:    assignee,
+			Priority:    priority,
+			IssueType:   i.Fields.IssueType.Name,
+			Updated:     i.Fields.Updated,
+			Description: desc,
+			Browse:      fmt.Sprintf("%s/browse/%s", c.baseURL, i.Key),
+		})
+	}
+	return issues, nil
+}
+
+// GetIssue fetches a single Jira issue by key with full details.
+func (c *Client) GetIssue(issueKey string) (*IssueSummary, error) {
+	reqURL := fmt.Sprintf("%s/rest/api/3/issue/%s?fields=summary,status,assignee,priority,issuetype,updated,description,labels,reporter",
+		c.baseURL, issueKey)
+
+	req, err := http.NewRequest(http.MethodGet, reqURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.SetBasicAuth(c.email, c.apiToken)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("send request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("jira API error (HTTP %d): %s", resp.StatusCode, string(respBody))
+	}
+
+	var raw struct {
+		Key    string `json:"key"`
+		Fields struct {
+			Summary     string                        `json:"summary"`
+			Status      struct{ Name string }         `json:"status"`
+			Assignee    *struct{ DisplayName string } `json:"assignee"`
+			Reporter    *struct{ DisplayName string } `json:"reporter"`
+			Priority    *struct{ Name string }        `json:"priority"`
+			IssueType   struct{ Name string }         `json:"issuetype"`
+			Updated     string                        `json:"updated"`
+			Labels      []string                      `json:"labels"`
+			Description json.RawMessage               `json:"description"`
+		} `json:"fields"`
+	}
+	if err := json.Unmarshal(respBody, &raw); err != nil {
+		return nil, fmt.Errorf("unmarshal response: %w", err)
+	}
+
+	assignee := ""
+	if raw.Fields.Assignee != nil {
+		assignee = raw.Fields.Assignee.DisplayName
+	}
+	reporter := ""
+	if raw.Fields.Reporter != nil {
+		reporter = raw.Fields.Reporter.DisplayName
+	}
+	priority := ""
+	if raw.Fields.Priority != nil {
+		priority = raw.Fields.Priority.Name
+	}
+	desc := adfToPlainText(raw.Fields.Description)
+	return &IssueSummary{
+		Key:         raw.Key,
+		Summary:     raw.Fields.Summary,
+		Status:      raw.Fields.Status.Name,
+		Assignee:    assignee,
+		Reporter:    reporter,
+		Priority:    priority,
+		IssueType:   raw.Fields.IssueType.Name,
+		Updated:     raw.Fields.Updated,
+		Labels:      raw.Fields.Labels,
+		Description: desc,
+		Browse:      fmt.Sprintf("%s/browse/%s", c.baseURL, raw.Key),
+	}, nil
+}
+
+// UpdateIssueDescription updates only the description of a Jira issue using ADF format.
+func (c *Client) UpdateIssueDescription(issueKey, description string) error {
+	adf := textToADF(description)
+	payload := map[string]interface{}{
+		"fields": map[string]interface{}{
+			"description": adf,
+		},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal payload: %w", err)
+	}
+
+	reqURL := fmt.Sprintf("%s/rest/api/3/issue/%s", c.baseURL, issueKey)
+	req, err := http.NewRequest(http.MethodPut, reqURL, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.SetBasicAuth(c.email, c.apiToken)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("send request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("jira API error (HTTP %d): %s", resp.StatusCode, string(respBody))
+	}
+
+	return nil
+}
+
+// IssueSummary represents a Jira issue with common fields.
+type IssueSummary struct {
+	Key         string   `json:"key"`
+	Summary     string   `json:"summary"`
+	Status      string   `json:"status"`
+	Assignee    string   `json:"assignee,omitempty"`
+	Reporter    string   `json:"reporter,omitempty"`
+	Priority    string   `json:"priority,omitempty"`
+	IssueType   string   `json:"issue_type"`
+	Updated     string   `json:"updated"`
+	Labels      []string `json:"labels,omitempty"`
+	Description string   `json:"description,omitempty"`
+	Browse      string   `json:"browse"`
+}
+
+// adfToPlainText extracts plain text from an ADF document (json.RawMessage).
+func adfToPlainText(data json.RawMessage) string {
+	if len(data) == 0 || string(data) == "null" {
+		return ""
+	}
+	var doc struct {
+		Content []json.RawMessage `json:"content"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return ""
+	}
+	var sb strings.Builder
+	for _, node := range doc.Content {
+		extractText(node, &sb)
+	}
+	return strings.TrimSpace(sb.String())
+}
+
+// extractText recursively extracts text from ADF nodes.
+func extractText(data json.RawMessage, sb *strings.Builder) {
+	var node struct {
+		Type    string            `json:"type"`
+		Text    string            `json:"text"`
+		Content []json.RawMessage `json:"content"`
+	}
+	if err := json.Unmarshal(data, &node); err != nil {
+		return
+	}
+	if node.Text != "" {
+		sb.WriteString(node.Text)
+	}
+	for _, child := range node.Content {
+		extractText(child, sb)
+	}
+	if node.Type == "paragraph" || node.Type == "heading" || node.Type == "bulletList" || node.Type == "orderedList" || node.Type == "listItem" {
+		sb.WriteString("\n")
+	}
+}
+
 func (c *Client) UpdateIssueFields(issueKey string, fields map[string]interface{}) error {
 	payload := map[string]interface{}{
 		"fields": fields,

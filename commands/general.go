@@ -42,6 +42,7 @@ func (h *GeneralHandler) Execute(channelID, userID, text, responseURL, auditTS s
 
 	systemMsg := h.systemPrompt()
 	systemMsg = strings.Replace(systemMsg, "{{MODEL}}", h.modelsClient.Model(), 1)
+	systemMsg = strings.Replace(systemMsg, "{{USER_ID}}", userID, 1)
 	history := h.memory.GetHistory(channelID, userID)
 	if history != "" {
 		systemMsg += fmt.Sprintf("\n\nPrevious conversation with this user:\n%s", history)
@@ -357,8 +358,66 @@ func (h *GeneralHandler) buildTools() []github.Tool {
 				Description: "List all Jira projects visible to the bot. Use this to discover available project keys before creating a ticket.",
 				Parameters:  json.RawMessage(`{"type":"object","properties":{}}`),
 			},
+		}, github.Tool{
+			Type: "function",
+			Function: github.ToolFunction{
+				Name:        "search_jira_issues",
+				Description: "Search for Jira issues using JQL (Jira Query Language). Use this to find tickets by status, assignee, project, labels, or any other criteria. Common JQL examples: 'assignee = \"John\" AND status = \"In Progress\"', 'project = ENG AND status = \"To Do\"', 'assignee = currentUser() AND status = \"In Progress\"'. When searching for a specific user's tickets, first use get_slack_user_info to get their real name, then search by that name.",
+				Parameters: json.RawMessage(`{
+					"type":"object",
+					"properties":{
+						"jql":{"type":"string","description":"JQL query string (e.g. 'assignee = \"John Doe\" AND status = \"In Progress\" ORDER BY updated DESC')"},
+						"max_results":{"type":"integer","description":"Maximum number of results to return (default: 20, max: 50)"}
+					},
+					"required":["jql"]
+				}`),
+			},
+		}, github.Tool{
+			Type: "function",
+			Function: github.ToolFunction{
+				Name:        "get_jira_issue",
+				Description: "Get full details of a specific Jira issue by its key (e.g. 'ENG-123'). Returns summary, description, status, assignee, priority, labels, and more.",
+				Parameters: json.RawMessage(`{
+					"type":"object",
+					"properties":{
+						"issue_key":{"type":"string","description":"Jira issue key (e.g. 'ENG-123', 'PROJ-456')"}
+					},
+					"required":["issue_key"]
+				}`),
+			},
+		}, github.Tool{
+			Type: "function",
+			Function: github.ToolFunction{
+				Name:        "update_jira_issue",
+				Description: "Update a Jira issue's description or summary. Use this to rewrite, refine, or improve ticket descriptions. IMPORTANT: Format the new description using markdown — use # for headers, - for bullet lists, 1) for numbered lists, **bold** for emphasis. Structure it professionally with clear sections.",
+				Parameters: json.RawMessage(`{
+					"type":"object",
+					"properties":{
+						"issue_key":{"type":"string","description":"Jira issue key (e.g. 'ENG-123')"},
+						"summary":{"type":"string","description":"New summary/title for the ticket (optional — only set if you want to change it)"},
+						"description":{"type":"string","description":"New description for the ticket in markdown format. Structure with clear sections like ## Context, ## Requirements, ## Acceptance Criteria, etc."}
+					},
+					"required":["issue_key"]
+				}`),
+			},
 		})
 	}
+
+	// Slack user info tool is always available.
+	tools = append(tools, github.Tool{
+		Type: "function",
+		Function: github.ToolFunction{
+			Name:        "get_slack_user_info",
+			Description: "Get the real name and profile information of a Slack user by their user ID. Use this to resolve the current user's real name for Jira queries. The user_id is available from the conversation context (the person who sent the command).",
+			Parameters: json.RawMessage(`{
+				"type":"object",
+				"properties":{
+					"user_id":{"type":"string","description":"Slack user ID (e.g. 'U01ABC123'). Use the current user's ID from the command context."}
+				},
+				"required":["user_id"]
+			}`),
+		},
+	})
 
 	return tools
 }
@@ -825,6 +884,122 @@ func (h *GeneralHandler) executeTool(ctx context.Context, channelID, userID, aud
 		}
 		log.Printf("[user=%s channel=%s] listed %d Jira projects", userID, channelID, len(projects))
 		return fmt.Sprintf("Jira projects (%d):\n%s", len(projects), strings.Join(projects, "\n"))
+
+	case "search_jira_issues":
+		if h.jiraClient == nil {
+			return "Error: Jira integration is not configured."
+		}
+		var args struct {
+			JQL        string `json:"jql"`
+			MaxResults int    `json:"max_results"`
+		}
+		if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+			return fmt.Sprintf("Error parsing arguments: %v", err)
+		}
+		issues, err := h.jiraClient.SearchIssuesJQL(args.JQL, args.MaxResults)
+		if err != nil {
+			return fmt.Sprintf("Error searching Jira issues: %v", err)
+		}
+		if len(issues) == 0 {
+			return fmt.Sprintf("No issues found for JQL: %s", args.JQL)
+		}
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "Found %d issues:\n\n", len(issues))
+		for _, i := range issues {
+			fmt.Fprintf(&sb, "• *%s* — %s\n  Status: %s | Type: %s | Priority: %s\n  Assignee: %s | Updated: %s\n  URL: %s\n", i.Key, i.Summary, i.Status, i.IssueType, i.Priority, i.Assignee, i.Updated, i.Browse)
+			if i.Description != "" {
+				desc := i.Description
+				if len(desc) > 500 {
+					desc = desc[:500] + "... (truncated)"
+				}
+				fmt.Fprintf(&sb, "  Description: %s\n", desc)
+			}
+			sb.WriteString("\n")
+		}
+		log.Printf("[user=%s channel=%s] searched Jira issues with JQL, found %d", userID, channelID, len(issues))
+		return sb.String()
+
+	case "get_jira_issue":
+		if h.jiraClient == nil {
+			return "Error: Jira integration is not configured."
+		}
+		var args struct {
+			IssueKey string `json:"issue_key"`
+		}
+		if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+			return fmt.Sprintf("Error parsing arguments: %v", err)
+		}
+		issue, err := h.jiraClient.GetIssue(args.IssueKey)
+		if err != nil {
+			return fmt.Sprintf("Error getting Jira issue: %v", err)
+		}
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "*%s* — %s\n", issue.Key, issue.Summary)
+		fmt.Fprintf(&sb, "Status: %s | Type: %s | Priority: %s\n", issue.Status, issue.IssueType, issue.Priority)
+		fmt.Fprintf(&sb, "Assignee: %s | Reporter: %s\n", issue.Assignee, issue.Reporter)
+		fmt.Fprintf(&sb, "Updated: %s\n", issue.Updated)
+		if len(issue.Labels) > 0 {
+			fmt.Fprintf(&sb, "Labels: %s\n", strings.Join(issue.Labels, ", "))
+		}
+		fmt.Fprintf(&sb, "URL: %s\n", issue.Browse)
+		if issue.Description != "" {
+			fmt.Fprintf(&sb, "\nDescription:\n%s\n", issue.Description)
+		} else {
+			fmt.Fprintf(&sb, "\nDescription: (empty)\n")
+		}
+		log.Printf("[user=%s channel=%s] fetched Jira issue %s", userID, channelID, args.IssueKey)
+		return sb.String()
+
+	case "update_jira_issue":
+		if h.jiraClient == nil {
+			return "Error: Jira integration is not configured."
+		}
+		var args struct {
+			IssueKey    string `json:"issue_key"`
+			Summary     string `json:"summary"`
+			Description string `json:"description"`
+		}
+		if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+			return fmt.Sprintf("Error parsing arguments: %v", err)
+		}
+		if args.Summary == "" && args.Description == "" {
+			return "Error: at least one of summary or description must be provided."
+		}
+		// Update summary if provided.
+		if args.Summary != "" {
+			if err := h.jiraClient.UpdateIssueFields(args.IssueKey, map[string]interface{}{"summary": args.Summary}); err != nil {
+				return fmt.Sprintf("Error updating summary: %v", err)
+			}
+		}
+		// Update description if provided (using ADF format).
+		if args.Description != "" {
+			if err := h.jiraClient.UpdateIssueDescription(args.IssueKey, args.Description); err != nil {
+				return fmt.Sprintf("Error updating description: %v", err)
+			}
+		}
+		updated := []string{}
+		if args.Summary != "" {
+			updated = append(updated, "summary")
+		}
+		if args.Description != "" {
+			updated = append(updated, "description")
+		}
+		log.Printf("[user=%s channel=%s] updated Jira issue %s (%s)", userID, channelID, args.IssueKey, strings.Join(updated, ", "))
+		return fmt.Sprintf("Successfully updated %s: %s", args.IssueKey, strings.Join(updated, " and "))
+
+	case "get_slack_user_info":
+		var args struct {
+			UserID string `json:"user_id"`
+		}
+		if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+			return fmt.Sprintf("Error parsing arguments: %v", err)
+		}
+		user, err := h.slackClient.GetUserInfo(args.UserID)
+		if err != nil {
+			return fmt.Sprintf("Error getting user info: %v", err)
+		}
+		return fmt.Sprintf("Slack User Info:\n  User ID: %s\n  Real Name: %s\n  Display Name: %s\n  Email: %s\n  Title: %s",
+			user.ID, user.RealName, user.Profile.DisplayName, user.Profile.Email, user.Profile.Title)
 
 	default:
 		return fmt.Sprintf("Unknown tool: %s", name)

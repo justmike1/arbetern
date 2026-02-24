@@ -8,6 +8,7 @@ type SlackClient interface {
 	PostMessage(channelID, text string) (string, error)
 	PostThreadReply(channelID, threadTS, text string) error
 	GetPermalink(channelID, messageTS string) (string, error)
+	GetUserInfo(userID string) (*slacklib.User, error)
 }
 
 // PromptProvider abstracts access to per-agent prompts.
