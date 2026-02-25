@@ -24,6 +24,8 @@ type Config struct {
 	JiraEmail          string
 	JiraAPIToken       string
 	JiraProject        string
+	JiraClientID       string
+	JiraClientSecret   string
 	AppURL             string
 }
 
@@ -33,8 +35,17 @@ func (c *Config) UseAzure() bool {
 }
 
 // JiraConfigured returns true when Jira credentials are present.
+// Supports both Basic Auth (email + API token) and OAuth 2.0 (client ID + secret).
 func (c *Config) JiraConfigured() bool {
-	return c.JiraURL != "" && c.JiraEmail != "" && c.JiraAPIToken != ""
+	if c.JiraURL == "" {
+		return false
+	}
+	return (c.JiraEmail != "" && c.JiraAPIToken != "") || (c.JiraClientID != "" && c.JiraClientSecret != "")
+}
+
+// JiraUseOAuth returns true when OAuth 2.0 client credentials are configured.
+func (c *Config) JiraUseOAuth() bool {
+	return c.JiraClientID != "" && c.JiraClientSecret != ""
 }
 
 func Load() (*Config, error) {
@@ -51,6 +62,8 @@ func Load() (*Config, error) {
 		JiraEmail:          os.Getenv("JIRA_EMAIL"),
 		JiraAPIToken:       os.Getenv("JIRA_API_TOKEN"),
 		JiraProject:        os.Getenv("JIRA_PROJECT"),
+		JiraClientID:       os.Getenv("JIRA_CLIENT_ID"),
+		JiraClientSecret:   os.Getenv("JIRA_CLIENT_SECRET"),
 		AppURL:             os.Getenv("APP_URL"),
 	}
 

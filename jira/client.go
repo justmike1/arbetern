@@ -10,27 +10,228 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
+	"time"
+)
+
+// authMode controls how API requests are authenticated.
+type authMode string
+
+const (
+	authBasic authMode = "basic"
+	authOAuth authMode = "oauth"
+
+	// Atlassian OAuth 2.0 (3LO) token endpoint.
+	atlassianTokenURL        = "https://auth.atlassian.com/oauth/token"
+	atlassianResourcesURL    = "https://api.atlassian.com/oauth/token/accessible-resources"
+	atlassianOAuthAPIBaseURL = "https://api.atlassian.com/ex/jira"
 )
 
 // Client provides access to the Jira Cloud REST API v3.
 type Client struct {
-	baseURL    string // e.g. "https://yourorg.atlassian.net"
-	email      string
-	apiToken   string
+	baseURL    string // API base URL for REST calls (differs between Basic Auth and OAuth)
+	siteURL    string // human-readable site URL (e.g. "https://yourorg.atlassian.net") — used for browse links
+	email      string // used for Basic Auth
+	apiToken   string // used for Basic Auth
 	projectKey string // default project key
 	httpClient *http.Client
+	mode       authMode
+
+	// OAuth 2.0 fields (only used when mode == authOAuth).
+	clientID     string
+	clientSecret string
+	cloudID      string // Atlassian cloud ID resolved from accessible-resources
+	accessToken  string
+	tokenExpiry  time.Time
+	tokenMu      sync.RWMutex
 }
 
-// NewClient creates a new Jira API client.
-// baseURL should be the Atlassian instance URL (e.g. "https://yourorg.atlassian.net").
+// NewClient creates a Jira API client using Basic Auth (email + API token).
 func NewClient(baseURL, email, apiToken, defaultProject string) *Client {
+	cleanURL := strings.TrimRight(baseURL, "/")
 	return &Client{
-		baseURL:    strings.TrimRight(baseURL, "/"),
+		baseURL:    cleanURL,
+		siteURL:    cleanURL,
 		email:      email,
 		apiToken:   apiToken,
 		projectKey: defaultProject,
 		httpClient: &http.Client{},
+		mode:       authBasic,
 	}
+}
+
+// NewOAuthClient creates a Jira API client using OAuth 2.0 client credentials.
+// It fetches an initial access token, resolves the Atlassian cloud ID for the
+// given site URL, and rewrites the base URL to the OAuth API endpoint.
+func NewOAuthClient(baseURL, clientID, clientSecret, defaultProject string) (*Client, error) {
+	cleanURL := strings.TrimRight(baseURL, "/")
+	c := &Client{
+		siteURL:      cleanURL,
+		clientID:     clientID,
+		clientSecret: clientSecret,
+		projectKey:   defaultProject,
+		httpClient:   &http.Client{},
+		mode:         authOAuth,
+	}
+	if err := c.refreshToken(); err != nil {
+		return nil, fmt.Errorf("initial OAuth token fetch failed: %w", err)
+	}
+	log.Printf("[jira] OAuth token acquired (expires %s)", c.tokenExpiry.Format(time.RFC3339))
+
+	// Resolve cloud ID so we use the correct OAuth API base URL.
+	cloudID, err := c.resolveCloudID()
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve Atlassian cloud ID for %s: %w", cleanURL, err)
+	}
+	c.cloudID = cloudID
+	c.baseURL = fmt.Sprintf("%s/%s", atlassianOAuthAPIBaseURL, cloudID)
+	log.Printf("[jira] OAuth cloud ID resolved: %s → %s", cleanURL, c.baseURL)
+
+	return c, nil
+}
+
+// resolveCloudID calls the Atlassian accessible-resources endpoint to find the
+// cloud ID matching the configured site URL.
+func (c *Client) resolveCloudID() (string, error) {
+	req, err := http.NewRequest(http.MethodGet, atlassianResourcesURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.accessToken)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("send request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("accessible-resources returned HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	var resources []struct {
+		ID   string `json:"id"`
+		URL  string `json:"url"`
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(body, &resources); err != nil {
+		return "", fmt.Errorf("unmarshal response: %w", err)
+	}
+
+	if len(resources) == 0 {
+		return "", fmt.Errorf("no accessible Atlassian sites found — ensure the OAuth app is authorized for your site")
+	}
+
+	// Match by URL.
+	siteNorm := strings.TrimRight(strings.ToLower(c.siteURL), "/")
+	for _, r := range resources {
+		if strings.TrimRight(strings.ToLower(r.URL), "/") == siteNorm {
+			log.Printf("[jira] matched site %q → cloud ID %s (name: %s)", c.siteURL, r.ID, r.Name)
+			return r.ID, nil
+		}
+	}
+
+	// If only one site, use it.
+	if len(resources) == 1 {
+		log.Printf("[jira] WARN: site URL %q didn't match %q, using the only available site (cloud ID: %s)", c.siteURL, resources[0].URL, resources[0].ID)
+		return resources[0].ID, nil
+	}
+
+	names := make([]string, len(resources))
+	for i, r := range resources {
+		names[i] = fmt.Sprintf("%s (%s)", r.URL, r.ID)
+	}
+	return "", fmt.Errorf("site URL %q not found in accessible resources: %v", c.siteURL, names)
+}
+
+// AuthMode returns the authentication mode ("basic" or "oauth").
+func (c *Client) AuthMode() string {
+	return string(c.mode)
+}
+
+// refreshToken fetches a new OAuth access token using the client credentials grant.
+func (c *Client) refreshToken() error {
+	payload := url.Values{
+		"grant_type":    {"client_credentials"},
+		"client_id":     {c.clientID},
+		"client_secret": {c.clientSecret},
+	}
+
+	resp, err := c.httpClient.PostForm(atlassianTokenURL, payload)
+	if err != nil {
+		return fmt.Errorf("token request failed: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("read token response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("token endpoint returned HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	var tokenResp struct {
+		AccessToken string `json:"access_token"`
+		ExpiresIn   int    `json:"expires_in"` // seconds
+		TokenType   string `json:"token_type"`
+	}
+	if err := json.Unmarshal(body, &tokenResp); err != nil {
+		return fmt.Errorf("unmarshal token response: %w", err)
+	}
+	if tokenResp.AccessToken == "" {
+		return fmt.Errorf("empty access token in response: %s", string(body))
+	}
+
+	c.tokenMu.Lock()
+	c.accessToken = tokenResp.AccessToken
+	// Refresh 60 seconds before actual expiry to avoid edge-case failures.
+	c.tokenExpiry = time.Now().Add(time.Duration(tokenResp.ExpiresIn)*time.Second - 60*time.Second)
+	c.tokenMu.Unlock()
+
+	return nil
+}
+
+// getAccessToken returns a valid OAuth access token, refreshing if needed.
+func (c *Client) getAccessToken() (string, error) {
+	c.tokenMu.RLock()
+	token := c.accessToken
+	expiry := c.tokenExpiry
+	c.tokenMu.RUnlock()
+
+	if time.Now().Before(expiry) {
+		return token, nil
+	}
+
+	log.Printf("[jira] OAuth token expired, refreshing...")
+	if err := c.refreshToken(); err != nil {
+		return "", err
+	}
+	c.tokenMu.RLock()
+	defer c.tokenMu.RUnlock()
+	return c.accessToken, nil
+}
+
+// authRequest sets the appropriate authentication headers on a request.
+func (c *Client) authRequest(req *http.Request) error {
+	switch c.mode {
+	case authOAuth:
+		token, err := c.getAccessToken()
+		if err != nil {
+			return fmt.Errorf("get OAuth token: %w", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+	default: // authBasic
+		req.SetBasicAuth(c.email, c.apiToken)
+	}
+	return nil
 }
 
 // DefaultProject returns the configured default project key.
@@ -421,7 +622,9 @@ func (c *Client) CreateIssue(input CreateIssueInput) (*Issue, error) {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.SetBasicAuth(c.email, c.apiToken)
+	if err := c.authRequest(req); err != nil {
+		return nil, fmt.Errorf("auth request: %w", err)
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -443,7 +646,7 @@ func (c *Client) CreateIssue(input CreateIssueInput) (*Issue, error) {
 		return nil, fmt.Errorf("unmarshal response: %w", err)
 	}
 
-	issue.Browse = fmt.Sprintf("%s/browse/%s", c.baseURL, issue.Key)
+	issue.Browse = fmt.Sprintf("%s/browse/%s", c.siteURL, issue.Key)
 	return &issue, nil
 }
 
@@ -455,7 +658,9 @@ func (c *Client) ListProjects() ([]string, error) {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.SetBasicAuth(c.email, c.apiToken)
+	if err := c.authRequest(req); err != nil {
+		return nil, fmt.Errorf("auth request: %w", err)
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -501,7 +706,18 @@ type JiraUser struct {
 // teams/service-accounts), then falls back to the general user search.
 // Results are ranked by how well the display name matches the query.
 func (c *Client) SearchUsers(query string) ([]JiraUser, error) {
-	return c.SearchAssignableUsers(query, c.projectKey)
+	users, err := c.SearchAssignableUsers(query, c.projectKey)
+	if err != nil || len(users) == 0 {
+		return c.SearchUsersGeneral(query)
+	}
+	return users, nil
+}
+
+// SearchUsersGeneral searches for Jira users using the general /user/search endpoint
+// which does NOT require project access. Use this when you only need the user's account ID
+// (e.g., for JQL queries) and don't need to verify project-assignability.
+func (c *Client) SearchUsersGeneral(query string) ([]JiraUser, error) {
+	return c.searchUsersRaw(query, "")
 }
 
 // searchUsersRaw performs a single user search API call and returns active users.
@@ -520,7 +736,9 @@ func (c *Client) searchUsersRaw(query, project string) ([]JiraUser, error) {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.SetBasicAuth(c.email, c.apiToken)
+	if err := c.authRequest(req); err != nil {
+		return nil, fmt.Errorf("auth request: %w", err)
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -677,7 +895,9 @@ func (c *Client) FindTeamFields() ([]teamFieldInfo, error) {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.SetBasicAuth(c.email, c.apiToken)
+	if err := c.authRequest(req); err != nil {
+		return nil, fmt.Errorf("auth request: %w", err)
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -738,8 +958,6 @@ func (c *Client) FindTeamFields() ([]teamFieldInfo, error) {
 			} else {
 				fallback = append(fallback, info)
 			}
-			log.Printf("[jira] discovered team field: id=%s, jqlName=%s, custom=%s, clauses=%v",
-				f.ID, info.JQLName, f.Schema.Custom, f.ClauseNames)
 		}
 	}
 
@@ -761,25 +979,17 @@ func (c *Client) ResolveTeam(teamName string) (string, string, string, error) {
 	}
 
 	core := coreQuery(teamName)
-	log.Printf("[jira] resolving team %q (core: %q, candidates: %d)", teamName, core, len(fields))
 
 	// --- Strategy 1: Jira Teams REST API (field-independent) ---
 	if team, err := c.searchTeamsAPI(core); err == nil && team != nil {
-		log.Printf("[jira] found team via Teams API: %s", team.displayName)
 		return fields[0].ID, team.teamID, team.displayName, nil
-	} else if err != nil {
-		log.Printf("[jira] Teams API failed: %v", err)
 	}
 
 	// --- Strategy 2: For each discovered team field, scan existing issues ---
 	for _, field := range fields {
-		log.Printf("[jira] trying issue scan with field %s (jqlName: %s)", field.ID, field.JQLName)
 		teamFromIssues, err := c.findTeamFromExistingIssues(&field, core)
 		if err == nil && teamFromIssues != nil {
-			log.Printf("[jira] found team via issue scan (field %s): %s", field.ID, teamFromIssues.displayName)
 			return field.ID, teamFromIssues.teamID, teamFromIssues.displayName, nil
-		} else if err != nil {
-			log.Printf("[jira] issue scan failed for field %s: %v", field.ID, err)
 		}
 	}
 
@@ -805,10 +1015,8 @@ func (c *Client) SetTeamField(issueKey, fieldID, teamID string) error {
 			fieldID: f.value,
 		})
 		if err == nil {
-			log.Printf("[jira] set team on %s using format %q", issueKey, f.name)
 			return nil
 		}
-		log.Printf("[jira] set team on %s with format %q failed: %v", issueKey, f.name, err)
 		lastErr = err
 	}
 	return lastErr
@@ -842,7 +1050,9 @@ func (c *Client) findTeamFromExistingIssues(field *teamFieldInfo, query string) 
 			continue
 		}
 		req.Header.Set("Content-Type", "application/json")
-		req.SetBasicAuth(c.email, c.apiToken)
+		if err := c.authRequest(req); err != nil {
+			continue
+		}
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
@@ -852,7 +1062,6 @@ func (c *Client) findTeamFromExistingIssues(field *teamFieldInfo, query string) 
 		respBody, err := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
 		if err != nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			log.Printf("[jira] JQL search failed (HTTP %d) for: %s — %s", resp.StatusCode, jql, string(respBody))
 			continue
 		}
 
@@ -866,8 +1075,6 @@ func (c *Client) findTeamFromExistingIssues(field *teamFieldInfo, query string) 
 		if err := json.Unmarshal(respBody, &result); err != nil {
 			continue
 		}
-
-		log.Printf("[jira] JQL returned %d issues (total: %d) for team field scan", len(result.Issues), result.Total)
 
 		// Scan returned issues for a team field value matching our query.
 		for _, issue := range result.Issues {
@@ -884,15 +1091,10 @@ func (c *Client) findTeamFromExistingIssues(field *teamFieldInfo, query string) 
 
 			nameL := strings.ToLower(name)
 			if nameL == q || strings.Contains(nameL, q) || strings.Contains(q, nameL) {
-				// Extract the team ID for setting the field.
 				teamID := extractTeamID(teamValue)
 				if teamID == "" {
-					log.Printf("[jira] matched team %q from issue %s but could not extract ID, raw: %s", name, issue.Key, string(teamValue))
 					continue
 				}
-				// The Atlassian Team field accepts multiple formats depending on version.
-				// We return the ID string; the caller will try different wrapping formats.
-				log.Printf("[jira] matched team %q (id: %s) from issue %s", name, teamID, issue.Key)
 				return &teamSearchResult{displayName: name, teamID: teamID}, nil
 			}
 		}
@@ -967,7 +1169,9 @@ func (c *Client) searchTeamsAPI(query string) (*teamSearchResult, error) {
 			continue
 		}
 		req.Header.Set("Content-Type", "application/json")
-		req.SetBasicAuth(c.email, c.apiToken)
+		if err := c.authRequest(req); err != nil {
+			continue
+		}
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
@@ -1078,6 +1282,91 @@ func (c *Client) parseTeamsResponse(data []byte) []normalizedTeam {
 	return result
 }
 
+// ResolveUserViaIssues is a fallback when /user/search returns no results (e.g. the
+// service account lacks "Browse users and groups" permission). It searches the default
+// project for issues with assignees and matches the display name against the query.
+// This works because the /search endpoint returns the assignee's accountId even when
+// the user search endpoints are restricted.
+func (c *Client) ResolveUserViaIssues(displayName string) ([]JiraUser, error) {
+	// Search for recently-updated issues with an assignee in the default project.
+	jql := fmt.Sprintf("project = %s AND assignee is not EMPTY ORDER BY updated DESC", c.projectKey)
+	searchURL := fmt.Sprintf("%s/rest/api/3/search/jql?jql=%s&maxResults=50&fields=assignee",
+		c.baseURL, url.QueryEscape(jql))
+
+	req, err := http.NewRequest(http.MethodGet, searchURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if err := c.authRequest(req); err != nil {
+		return nil, fmt.Errorf("auth request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("send request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("jira API error (HTTP %d): %s", resp.StatusCode, string(respBody))
+	}
+
+	var result struct {
+		Issues []struct {
+			Fields struct {
+				Assignee *struct {
+					AccountID   string `json:"accountId"`
+					DisplayName string `json:"displayName"`
+					Active      bool   `json:"active"`
+				} `json:"assignee"`
+			} `json:"fields"`
+		} `json:"issues"`
+	}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("unmarshal response: %w", err)
+	}
+
+	// Deduplicate users and find matches.
+	seen := make(map[string]bool)
+	queryLower := strings.ToLower(strings.TrimSpace(displayName))
+	queryParts := strings.Fields(queryLower)
+	var matches []JiraUser
+	for _, issue := range result.Issues {
+		a := issue.Fields.Assignee
+		if a == nil || seen[a.AccountID] {
+			continue
+		}
+		seen[a.AccountID] = true
+		nameLower := strings.ToLower(a.DisplayName)
+		// Match if the display name contains the full query or all query parts.
+		matched := strings.Contains(nameLower, queryLower)
+		if !matched && len(queryParts) > 1 {
+			matched = true
+			for _, p := range queryParts {
+				if !strings.Contains(nameLower, p) {
+					matched = false
+					break
+				}
+			}
+		}
+		if matched {
+			matches = append(matches, JiraUser{
+				AccountID:   a.AccountID,
+				DisplayName: a.DisplayName,
+				Active:      a.Active,
+			})
+		}
+	}
+
+	return matches, nil
+}
+
 // UpdateIssueFields sets arbitrary fields on an existing Jira issue.
 // SearchIssuesJQL searches for issues using JQL and returns a formatted summary.
 func (c *Client) SearchIssuesJQL(jql string, maxResults int) ([]IssueSummary, error) {
@@ -1092,7 +1381,9 @@ func (c *Client) SearchIssuesJQL(jql string, maxResults int) ([]IssueSummary, er
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.SetBasicAuth(c.email, c.apiToken)
+	if err := c.authRequest(req); err != nil {
+		return nil, fmt.Errorf("auth request: %w", err)
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -1148,7 +1439,7 @@ func (c *Client) SearchIssuesJQL(jql string, maxResults int) ([]IssueSummary, er
 			IssueType:   i.Fields.IssueType.Name,
 			Updated:     i.Fields.Updated,
 			Description: desc,
-			Browse:      fmt.Sprintf("%s/browse/%s", c.baseURL, i.Key),
+			Browse:      fmt.Sprintf("%s/browse/%s", c.siteURL, i.Key),
 		})
 	}
 	return issues, nil
@@ -1164,7 +1455,9 @@ func (c *Client) GetIssue(issueKey string) (*IssueSummary, error) {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.SetBasicAuth(c.email, c.apiToken)
+	if err := c.authRequest(req); err != nil {
+		return nil, fmt.Errorf("auth request: %w", err)
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -1223,7 +1516,7 @@ func (c *Client) GetIssue(issueKey string) (*IssueSummary, error) {
 		Updated:     raw.Fields.Updated,
 		Labels:      raw.Fields.Labels,
 		Description: desc,
-		Browse:      fmt.Sprintf("%s/browse/%s", c.baseURL, raw.Key),
+		Browse:      fmt.Sprintf("%s/browse/%s", c.siteURL, raw.Key),
 	}, nil
 }
 
@@ -1246,7 +1539,9 @@ func (c *Client) UpdateIssueDescription(issueKey, description string) error {
 		return fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.SetBasicAuth(c.email, c.apiToken)
+	if err := c.authRequest(req); err != nil {
+		return fmt.Errorf("auth request: %w", err)
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -1331,7 +1626,9 @@ func (c *Client) UpdateIssueFields(issueKey string, fields map[string]interface{
 		return fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.SetBasicAuth(c.email, c.apiToken)
+	if err := c.authRequest(req); err != nil {
+		return fmt.Errorf("auth request: %w", err)
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

@@ -93,6 +93,18 @@ spec:
                   name: {{ .Values.secretName }}
                   key: jira-api-token
             {{- end }}
+            {{- if index .Values.secretValues "jira-client-id" }}
+            - name: JIRA_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secretName }}
+                  key: jira-client-id
+            - name: JIRA_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secretName }}
+                  key: jira-client-secret
+            {{- end }}
             {{- if index .Values.secretValues "jira-project" }}
             - name: JIRA_PROJECT
               valueFrom:

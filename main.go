@@ -44,8 +44,17 @@ func main() {
 
 	var jiraClient *jira.Client
 	if cfg.JiraConfigured() {
-		jiraClient = jira.NewClient(cfg.JiraURL, cfg.JiraEmail, cfg.JiraAPIToken, cfg.JiraProject)
-		log.Printf("Jira integration enabled: %s (default project: %s)", cfg.JiraURL, cfg.JiraProject)
+		if cfg.JiraUseOAuth() {
+			var err error
+			jiraClient, err = jira.NewOAuthClient(cfg.JiraURL, cfg.JiraClientID, cfg.JiraClientSecret, cfg.JiraProject)
+			if err != nil {
+				log.Fatalf("Jira OAuth initialization failed: %v", err)
+			}
+			log.Printf("Jira integration enabled (OAuth): %s (default project: %s)", cfg.JiraURL, cfg.JiraProject)
+		} else {
+			jiraClient = jira.NewClient(cfg.JiraURL, cfg.JiraEmail, cfg.JiraAPIToken, cfg.JiraProject)
+			log.Printf("Jira integration enabled (Basic Auth): %s (default project: %s)", cfg.JiraURL, cfg.JiraProject)
+		}
 	}
 
 	// Discover agents and register per-agent webhook routes (/<agent>/webhook).

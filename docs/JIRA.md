@@ -4,6 +4,10 @@ Arbetern can create Jira tickets directly from Slack conversations — for examp
 
 ## Required Credentials
 
+Arbetern supports two authentication methods:
+
+### Option A: Basic Auth (email + API token)
+
 | Environment Variable | Description |
 |---|---|
 | `JIRA_URL` | Your Atlassian instance URL (e.g. `https://yourorg.atlassian.net`) |
@@ -11,13 +15,26 @@ Arbetern can create Jira tickets directly from Slack conversations — for examp
 | `JIRA_API_TOKEN` | A Jira API token (not your account password) |
 | `JIRA_PROJECT` | *(optional)* Default project key (e.g. `ENG`). If omitted, the bot will ask which project to use. |
 
+### Option B: OAuth 2.0 (client credentials)
+
+| Environment Variable | Description |
+|---|---|
+| `JIRA_URL` | Your Atlassian instance URL (e.g. `https://yourorg.atlassian.net`) |
+| `JIRA_CLIENT_ID` | OAuth 2.0 client ID from your Atlassian Developer Console app |
+| `JIRA_CLIENT_SECRET` | OAuth 2.0 client secret |
+| `JIRA_PROJECT` | *(optional)* Default project key (e.g. `ENG`) |
+
+> **Note:** If both Basic Auth and OAuth credentials are configured, OAuth takes precedence.
+
 ## Step-by-step Setup
 
-### 1. Get Your Atlassian Instance URL
+### Method 1: Basic Auth (API token)
+
+#### 1. Get Your Atlassian Instance URL
 
 This is the base URL you use to access Jira, e.g. `https://yourorg.atlassian.net`.
 
-### 2. Create a Jira API Token
+#### 2. Create a Jira API Token
 
 Arbetern uses **Basic Auth** (email + token), which requires a **classic API token**.
 
@@ -34,19 +51,54 @@ Classic API tokens inherit all permissions of the account that created them, so 
 
 > **Tip:** Use a dedicated service account rather than a personal account, so the bot's access isn't tied to a single person.
 
-### 3. Note the Account Email
+#### 3. Note the Account Email
 
 Use the email address associated with the Atlassian account that created the API token. This is the value for `JIRA_EMAIL`.
 
-### 4. Find Your Project Key
+#### 4. Find Your Project Key
 
 Open Jira and navigate to the target project. The project key is the prefix shown on issue IDs (e.g. if issues are `ENG-123`, the key is `ENG`).
 
 You can also let the bot discover projects at runtime — users can ask it to `list jira projects`.
 
+### Method 2: OAuth 2.0 (client credentials)
+
+OAuth 2.0 is recommended when you want app-level access without tying credentials to a specific user account.
+
+#### 1. Create an OAuth 2.0 App
+
+1. Go to [developer.atlassian.com/console/myapps](https://developer.atlassian.com/console/myapps/).
+2. Click **Create** → **OAuth 2.0 integration**.
+3. Give it a name (e.g. `Arbetern`) and click **Create**.
+
+#### 2. Configure Scopes
+
+In the app settings, go to **Permissions** → **Jira API** → **Configure** and add:
+
+| Scope | Why |
+|---|---|
+| `read:jira-work` | Search and read issues |
+| `write:jira-work` | Create and update issues |
+| `read:jira-user` | Resolve user accounts for assignee lookups |
+
+#### 3. Get Client Credentials
+
+Go to **Settings** in your app and copy:
+- **Client ID** → `JIRA_CLIENT_ID`
+- **Secret** → `JIRA_CLIENT_SECRET`
+
+#### 4. Authorize the App
+
+The app must be authorized for your Atlassian site:
+1. Go to **Authorization** → **Add** → select your site.
+2. Grant the scopes configured above.
+
+> **Note:** OAuth tokens are automatically refreshed by Arbetern before they expire.
+
+
 ## Helm Deployment
 
-Add the credentials to your values override file:
+### Basic Auth
 
 ```yaml
 secretValues:
@@ -56,13 +108,31 @@ secretValues:
   jira-project: "ENG"
 ```
 
+### OAuth 2.0
+
+```yaml
+secretValues:
+  jira-url: "https://yourorg.atlassian.net"
+  jira-client-id: "your-oauth-client-id"
+  jira-client-secret: "your-oauth-client-secret"
+  jira-project: "ENG"
+```
+
 Or create the secret manually:
 
 ```bash
+# Basic Auth
 kubectl create secret generic arbetern-secrets \
   --from-literal=jira-url=https://yourorg.atlassian.net \
   --from-literal=jira-email=bot@yourorg.com \
   --from-literal=jira-api-token=ATATT3x... \
+  --from-literal=jira-project=ENG
+
+# OAuth 2.0
+kubectl create secret generic arbetern-secrets \
+  --from-literal=jira-url=https://yourorg.atlassian.net \
+  --from-literal=jira-client-id=your-client-id \
+  --from-literal=jira-client-secret=your-client-secret \
   --from-literal=jira-project=ENG
 ```
 

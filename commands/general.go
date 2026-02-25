@@ -362,7 +362,7 @@ func (h *GeneralHandler) buildTools() []github.Tool {
 			Type: "function",
 			Function: github.ToolFunction{
 				Name:        "search_jira_issues",
-				Description: "Search for Jira issues using JQL (Jira Query Language). Use this to find tickets by status, assignee, project, labels, or any other criteria. Common JQL examples: 'assignee = \"John\" AND status = \"In Progress\"', 'project = ENG AND status = \"To Do\"', 'assignee = currentUser() AND status = \"In Progress\"'. When searching for a specific user's tickets, first use get_slack_user_info to get their real name, then search by that name.",
+				Description: "Search for Jira issues using JQL (Jira Query Language). IMPORTANT: Jira Cloud does NOT reliably support searching by display name. Before searching by assignee, you MUST first call resolve_jira_user to get the user's Jira account ID, then use that account ID in JQL (e.g. assignee = 'accountId'). Common JQL examples: 'assignee = \"712020:abc-def\" AND status = \"In Progress\"', 'project = ENG AND status = \"To Do\"'. When searching for a specific user's tickets: 1) call get_slack_user_info to get their real name, 2) call resolve_jira_user with that name to get the Jira account ID, 3) use the account ID in the JQL query.",
 				Parameters: json.RawMessage(`{
 					"type":"object",
 					"properties":{
@@ -418,6 +418,25 @@ func (h *GeneralHandler) buildTools() []github.Tool {
 			}`),
 		},
 	})
+
+	// Jira user resolution tool — resolves a person's name/email to their Jira account ID.
+	if h.jiraClient != nil {
+		tools = append(tools, github.Tool{
+			Type: "function",
+			Function: github.ToolFunction{
+				Name:        "resolve_jira_user",
+				Description: "Search for a Jira user by name and/or email and return their account ID. IMPORTANT: Jira Cloud JQL does NOT reliably support searching by display name (e.g. assignee = 'Mike Joseph' may return zero results). You MUST call this tool first to get the user's Jira account ID, then use that account ID in JQL queries (e.g. assignee = 'accountId'). This is the ONLY reliable way to find issues by assignee in Jira Cloud. ALWAYS pass both name AND email (from get_slack_user_info) for best results — email-based search is the most reliable.",
+				Parameters: json.RawMessage(`{
+					"type":"object",
+					"properties":{
+						"name":{"type":"string","description":"The person's display name (e.g. 'Mike Joseph', 'John Smith')"},
+						"email":{"type":"string","description":"The person's email address (most reliable for Jira lookup). Get this from get_slack_user_info."}
+					},
+					"required":["name"]
+				}`),
+			},
+		})
+	}
 
 	return tools
 }
@@ -1000,6 +1019,88 @@ func (h *GeneralHandler) executeTool(ctx context.Context, channelID, userID, aud
 		}
 		return fmt.Sprintf("Slack User Info:\n  User ID: %s\n  Real Name: %s\n  Display Name: %s\n  Email: %s\n  Title: %s",
 			user.ID, user.RealName, user.Profile.DisplayName, user.Profile.Email, user.Profile.Title)
+
+	case "resolve_jira_user":
+		if h.jiraClient == nil {
+			return "Error: Jira integration is not configured."
+		}
+		var args struct {
+			Name  string `json:"name"`
+			Email string `json:"email"`
+		}
+		if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+			return fmt.Sprintf("Error parsing arguments: %v", err)
+		}
+
+		// Multi-strategy search: email first (most reliable), then full name, then individual name parts.
+		type attempt struct {
+			label string
+			query string
+		}
+		var attempts []attempt
+		if args.Email != "" {
+			attempts = append(attempts, attempt{"email", args.Email})
+		}
+		if args.Name != "" {
+			attempts = append(attempts, attempt{"full name", args.Name})
+			// Also try individual name parts (first name, last name) since Jira's
+			// /user/search often matches prefixes, and "Mike Joseph" as a single
+			// query may fail while "Mike" succeeds.
+			parts := strings.Fields(args.Name)
+			if len(parts) > 1 {
+				for _, p := range parts {
+					attempts = append(attempts, attempt{"name part", p})
+				}
+			}
+		}
+
+		var users []jira.JiraUser
+		var matchLabel string
+		for _, a := range attempts {
+			result, err := h.jiraClient.SearchUsersGeneral(a.query)
+			if err != nil {
+				log.Printf("[user=%s channel=%s] Jira user search by %s (%q) failed: %v", userID, channelID, a.label, a.query, err)
+				continue
+			}
+			if len(result) > 0 {
+				users = result
+				matchLabel = a.label
+				log.Printf("[user=%s channel=%s] Jira user search by %s (%q) returned %d result(s)", userID, channelID, a.label, a.query, len(result))
+				break
+			}
+			log.Printf("[user=%s channel=%s] Jira user search by %s (%q) returned 0 results, trying next strategy", userID, channelID, a.label, a.query)
+		}
+
+		if len(users) == 0 {
+			// Final fallback: reverse-lookup via project issues. This works even when
+			// the service account lacks "Browse users and groups" global permission,
+			// because the issue search endpoint returns assignee accountIds.
+			log.Printf("[user=%s channel=%s] all /user/search strategies failed, trying issue-based reverse lookup for %q", userID, channelID, args.Name)
+			issueUsers, err := h.jiraClient.ResolveUserViaIssues(args.Name)
+			if err != nil {
+				log.Printf("[user=%s channel=%s] issue-based user lookup failed: %v", userID, channelID, err)
+			} else if len(issueUsers) > 0 {
+				users = issueUsers
+				matchLabel = "issue assignee reverse lookup"
+				log.Printf("[user=%s channel=%s] issue-based reverse lookup found %d match(es) for %q", userID, channelID, len(users), args.Name)
+			}
+		}
+
+		if len(users) == 0 {
+			return fmt.Sprintf("No Jira users found matching name=%q email=%q after trying all search strategies (user search + issue reverse lookup). Verify the user exists in Jira and has issues assigned in project.", args.Name, args.Email)
+		}
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "Found %d Jira user(s) (matched by %s):\n", len(users), matchLabel)
+		for i, u := range users {
+			if i >= 5 {
+				fmt.Fprintf(&sb, "  ... and %d more\n", len(users)-5)
+				break
+			}
+			fmt.Fprintf(&sb, "  • %s (accountId: %s, active: %v)\n", u.DisplayName, u.AccountID, u.Active)
+		}
+		fmt.Fprintf(&sb, "\nUse the accountId in JQL queries like: assignee = \"%s\"\n", users[0].AccountID)
+		log.Printf("[user=%s channel=%s] resolved Jira user %q -> %s (%s) via %s", userID, channelID, args.Name, users[0].DisplayName, users[0].AccountID, matchLabel)
+		return sb.String()
 
 	default:
 		return fmt.Sprintf("Unknown tool: %s", name)
