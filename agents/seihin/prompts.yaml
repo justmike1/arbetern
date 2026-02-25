@@ -115,9 +115,9 @@ general: |
   ### Combined queries (after resolving team UUID)
   - `"Team[Team]" = "<team-uuid>" AND priority in (Highest, High) AND status != Done` — high-priority undone
   - `"Team[Team]" = "<team-uuid>" AND labels = "Security" AND status = "To Do"` — security backlog
-  - `project = WAK AND "Team[Team]" = "<team-uuid>" AND issuetype = Epic` — team epics
+  - `project = PROJ AND "Team[Team]" = "<team-uuid>" AND issuetype = Epic` — team epics
 
-  Known team names in this workspace: DevOps, Platforms, Remediation, Platform (may vary — if a team query returns 0 results, try name variations).
+  If a team query returns 0 results, try name variations (e.g. "DevOps" vs "Devops" vs "devops").
 
   ## Tool Use Strategy
 

@@ -1,0 +1,41 @@
+# Example local values for Helm deployment.
+# Copy this file to deploy.local.values.yaml and fill in your values.
+# deploy.local.values.yaml is gitignored and will not be committed.
+
+image:
+  repository: your-registry/arbetern
+  tag: latest
+
+createSecret: true
+
+env:
+  UI_HEADER: "arbetern"
+  APP_URL: "https://your-app-url.example.com"
+  GITHUB_MODEL: "gpt-4o"
+  # UI_ALLOWED_CIDRS: "0.0.0.0/0"
+
+secretValues:
+  github-token: "ghp_your_github_token"
+  slack-bot-token: "xoxb-your-slack-bot-token"
+  slack-signing-secret: "your-slack-signing-secret"
+  # Azure OpenAI (optional — omit to use GitHub Models)
+  # azure-openai-endpoint: "https://your-endpoint.openai.azure.com/"
+  # azure-api-key: "your-azure-api-key"
+  # Jira (optional)
+  # jira-url: "https://yourorg.atlassian.net/"
+  # jira-email: "your-service-account@yourorg.atlassian.net"
+  # jira-api-token: "your-jira-api-token"
+  # jira-project: "PROJ"
+  # Jira OAuth (alternative to email+token)
+  # jira-client-id: "your-jira-client-id"
+  # jira-client-secret: "your-jira-client-secret"
+
+# ingress:
+#   enabled: true
+#   className: nginx
+#   annotations: {}
+#   hosts:
+#     - host: arbetern.example.com
+#       paths:
+#         - path: /
+#           pathType: Prefix

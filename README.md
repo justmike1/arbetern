@@ -1,5 +1,10 @@
 # arbetern
 
+[![Stars](https://img.shields.io/github/stars/justmike1/arbetern?style=social)](https://github.com/justmike1/arbetern/stargazers)
+[![Go](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go&logoColor=white)](https://go.dev)
+[![License](https://img.shields.io/github/license/justmike1/arbetern)](LICENSE)
+[![Docker](https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white)](Dockerfile)
+
 *Yiddish for "workers."*
 
 An orchestration platform for AI agents in the enterprise. Each agent lives in its own directory under `agents/`, with dedicated prompts and a defined professional scope. Arbetern provides the runtime, routing, UI, and integrations — agents bring the expertise.
@@ -61,6 +66,8 @@ docker run -e SLACK_BOT_TOKEN -e SLACK_SIGNING_SECRET -e GITHUB_TOKEN arbetern
 ### Helm
 
 ```bash
+cp deploy.example.values.yaml deploy.local.values.yaml
+# Edit deploy.local.values.yaml with your secrets
 helm upgrade --install arbetern ./helm -f deploy.local.values.yaml
 ```
 
@@ -119,3 +126,25 @@ Global prompts (e.g. `security`) are defined in `agents/prompts.yaml` and inheri
 | Slack | [docs/SLACK_BOT.md](docs/SLACK_BOT.md) | All agents |
 | GitHub | [docs/GITHUB_PAT.md](docs/GITHUB_PAT.md) | ovad, agent-q |
 | Jira | [docs/JIRA.md](docs/JIRA.md) | seihin, ovad, agent-q |
+
+## Contributing
+
+Contributions are welcome! Please open an issue or submit a pull request.
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## Author & Maintainer
+
+**Mike Joseph** — [@justmike1](https://github.com/justmike1)
+
+## License
+
+This project is licensed under the Apache License 2.0 — see the [LICENSE](LICENSE) file for details.
+
+---
+
+If you find this project useful, please consider giving it a ⭐!
