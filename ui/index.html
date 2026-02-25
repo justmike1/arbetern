@@ -10,18 +10,18 @@
 
     :root {
       --bg: #000000;
-      --surface: #0d0d0d;
-      --card: #141414;
-      --card-hover: #1a1a1a;
-      --border: #1f1f1f;
-      --border-accent: #2a2a2a;
-      --text: #e4e4e7;
-      --text-muted: #71717a;
-      --accent: #6366f1;
-      --accent-glow: rgba(99, 102, 241, 0.15);
-      --green: #22c55e;
-      --radius: 12px;
-      --radius-lg: 16px;
+      --surface: #070707;
+      --card: #0c0c0c;
+      --card-hover: #111111;
+      --border: #1a1a1a;
+      --border-accent: #242424;
+      --text: #b0b8c1;
+      --text-muted: #6b7685;
+      --accent: #4a8ad4;
+      --accent-glow: rgba(74, 138, 212, 0.06);
+      --green: #2e9444;
+      --radius: 10px;
+      --radius-lg: 12px;
     }
 
     body {
@@ -126,8 +126,8 @@
       top: 0;
       left: 0;
       right: 0;
-      height: 3px;
-      background: var(--accent);
+      height: 2px;
+      background: var(--border-accent);
       opacity: 0;
       transition: opacity 0.2s ease;
     }
@@ -135,8 +135,7 @@
     .agent-card:hover {
       background: var(--card-hover);
       border-color: var(--border-accent);
-      transform: translateY(-2px);
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
     }
 
     .agent-card:hover::before {
@@ -401,8 +400,7 @@
     .integration-card:hover {
       background: var(--card-hover);
       border-color: var(--border-accent);
-      transform: translateY(-2px);
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
     }
 
     .integration-card.expanded {
@@ -435,14 +433,31 @@
     }
 
     .integration-active-model {
-      font-family: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+      display: flex;
+      align-items: center;
+      gap: 8px;
       font-size: 13px;
-      color: var(--accent);
+      color: var(--text);
       margin-bottom: 14px;
-      padding: 6px 10px;
-      background: rgba(88,166,255,0.08);
+      padding: 8px 12px;
+      background: var(--card);
+      border: 1px solid var(--border);
       border-radius: 6px;
       width: fit-content;
+    }
+
+    .integration-active-model .model-label {
+      font-weight: 600;
+      font-size: 11px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+    }
+
+    .integration-active-model .model-value {
+      font-family: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+      font-size: 13px;
+      color: var(--text);
     }
 
     .integration-detail-header .integration-logo {
@@ -498,14 +513,14 @@
 
     .integration-status.connected {
       color: var(--green);
-      background: rgba(34, 197, 94, 0.1);
-      border: 1px solid rgba(34, 197, 94, 0.2);
+      background: rgba(46, 148, 68, 0.06);
+      border: 1px solid rgba(46, 148, 68, 0.12);
     }
 
     .integration-status.disconnected {
-      color: #f87171;
-      background: rgba(248, 113, 113, 0.1);
-      border: 1px solid rgba(248, 113, 113, 0.2);
+      color: #c44040;
+      background: rgba(196, 64, 64, 0.06);
+      border: 1px solid rgba(196, 64, 64, 0.12);
     }
 
     .integration-auth-mode {
@@ -577,7 +592,7 @@
     .permissions-table .scope-name {
       font-family: 'SF Mono', 'Fira Code', monospace;
       font-size: 12px;
-      color: var(--accent);
+      color: var(--text);
       white-space: nowrap;
     }
 
@@ -595,8 +610,8 @@
     }
 
     .perm-badge.required {
-      color: #f97316;
-      background: rgba(249, 115, 22, 0.1);
+      color: #a67c1a;
+      background: rgba(166, 124, 26, 0.08);
     }
 
     .perm-badge.optional {
@@ -617,13 +632,13 @@
     }
 
     .perm-status.granted {
-      color: #22c55e;
-      background: rgba(34, 197, 94, 0.1);
+      color: #2e9444;
+      background: rgba(46, 148, 68, 0.06);
     }
 
     .perm-status.denied {
-      color: #ef4444;
-      background: rgba(239, 68, 68, 0.1);
+      color: #c44040;
+      background: rgba(196, 64, 64, 0.06);
     }
 
     .perm-status.unknown {
@@ -632,13 +647,13 @@
     }
 
     .perm-status.warning {
-      color: #eab308;
-      background: rgba(234, 179, 8, 0.1);
+      color: #a67c1a;
+      background: rgba(166, 124, 26, 0.06);
     }
 
     .perm-badge.extra {
-      color: #eab308;
-      background: rgba(234, 179, 8, 0.1);
+      color: #a67c1a;
+      background: rgba(166, 124, 26, 0.06);
     }
 
     .perm-status-icon {
@@ -925,7 +940,7 @@
             </div>
             <button class="integration-detail-close" onclick="toggleIntegration('${ig.id}')" title="Close">&times;</button>
           </div>
-          ${ig.active_model ? `<div class="integration-active-model">Model: <strong>${escapeHtml(ig.active_model)}</strong></div>` : ''}
+          ${ig.active_model ? `<div class="integration-active-model"><span class="model-label">Active Model</span><span class="model-value">${escapeHtml(ig.active_model)}</span></div>` : ''}
           <table class="permissions-table">
             <thead>
               <tr>
