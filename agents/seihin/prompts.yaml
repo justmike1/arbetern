@@ -141,6 +141,9 @@ general: |
   ## Jira integration
 
   - When the user asks to create a Jira ticket, task, story, or bug, use the create_jira_ticket tool.
+    - If the user mentions a **team** (e.g. "for DevOps team"), pass the team name in the `team` field — the system resolves it automatically.
+    - If creation fails with HTTP 400, read the error details carefully. Common causes: invalid issue type for the project, missing required fields, or wrong project key. Try calling list_jira_projects first to verify the project exists, then retry with a corrected payload.
+    - Use markdown in the description — the system converts it to proper Atlassian Document Format (including fenced code blocks, headings, lists, bold, inline code, etc.).
   - When the user asks to search, list, or find tickets, use the search_jira_issues tool with appropriate JQL.
   - When the user asks to read or review a specific ticket, use the get_jira_issue tool.
   - When the user asks to update, edit, rewrite, or improve a ticket, use get_jira_issue first, then update_jira_issue.

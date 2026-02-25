@@ -304,10 +304,11 @@ type adfNode struct {
 }
 
 type adfAttrs struct {
-	Level int    `json:"level,omitempty"`
-	Order int    `json:"order,omitempty"`
-	URL   string `json:"url,omitempty"`
-	Href  string `json:"href,omitempty"`
+	Level    int    `json:"level,omitempty"`
+	Order    int    `json:"order,omitempty"`
+	URL      string `json:"url,omitempty"`
+	Href     string `json:"href,omitempty"`
+	Language string `json:"language,omitempty"`
 }
 
 type adfInline struct {
@@ -327,11 +328,20 @@ type adfMarkAttrs struct {
 }
 
 // marshalInlines converts inline elements to json.RawMessage.
+// Empty text nodes are silently dropped — they violate the ADF specification
+// and cause Jira to reject the payload with HTTP 400 INVALID_INPUT.
 func marshalInlines(inlines []adfInline) json.RawMessage {
-	if len(inlines) == 0 {
+	var filtered []adfInline
+	for _, n := range inlines {
+		if n.Type == "text" && n.Text == "" {
+			continue
+		}
+		filtered = append(filtered, n)
+	}
+	if len(filtered) == 0 {
 		return nil
 	}
-	b, _ := json.Marshal(inlines)
+	b, _ := json.Marshal(filtered)
 	return b
 }
 
@@ -368,6 +378,55 @@ func textToADF(text string) *adfDoc {
 		if trimmed == "---" || trimmed == "***" || trimmed == "___" {
 			nodes = append(nodes, adfNode{Type: "rule"})
 			i++
+			continue
+		}
+
+		// Fenced code block: ```lang ... ```
+		if strings.HasPrefix(trimmed, "```") {
+			lang := strings.TrimSpace(strings.TrimPrefix(trimmed, "```"))
+			i++
+			var codeLines []string
+			for i < len(lines) {
+				if strings.TrimSpace(lines[i]) == "```" {
+					i++
+					break
+				}
+				codeLines = append(codeLines, lines[i])
+				i++
+			}
+			codeText := strings.Join(codeLines, "\n")
+			if codeText != "" {
+				attrs := &adfAttrs{}
+				if lang != "" {
+					attrs.Language = lang
+				}
+				nodes = append(nodes, adfNode{
+					Type:    "codeBlock",
+					Attrs:   attrs,
+					Content: marshalInlines([]adfInline{{Type: "text", Text: codeText}}),
+				})
+			}
+			continue
+		}
+
+		// Block quote: > text
+		if strings.HasPrefix(trimmed, "> ") {
+			var quoteLines []string
+			for i < len(lines) {
+				lt := strings.TrimSpace(lines[i])
+				if !strings.HasPrefix(lt, "> ") {
+					break
+				}
+				quoteLines = append(quoteLines, strings.TrimPrefix(lt, "> "))
+				i++
+			}
+			quoteText := strings.Join(quoteLines, " ")
+			nodes = append(nodes, adfNode{
+				Type: "blockquote",
+				Content: marshalNodes([]adfNode{
+					{Type: "paragraph", Content: marshalInlines(parseInlineMarkdown(quoteText))},
+				}),
+			})
 			continue
 		}
 
@@ -643,6 +702,21 @@ func (c *Client) CreateIssue(input CreateIssueInput) (*Issue, error) {
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		// Try to parse structured Jira error for actionable diagnostics.
+		var jiraErr struct {
+			ErrorMessages []string          `json:"errorMessages"`
+			Errors        map[string]string `json:"errors"`
+		}
+		if json.Unmarshal(respBody, &jiraErr) == nil {
+			var parts []string
+			parts = append(parts, jiraErr.ErrorMessages...)
+			for field, msg := range jiraErr.Errors {
+				parts = append(parts, fmt.Sprintf("%s: %s", field, msg))
+			}
+			if len(parts) > 0 {
+				return nil, fmt.Errorf("jira API error (HTTP %d): %s", resp.StatusCode, strings.Join(parts, "; "))
+			}
+		}
 		return nil, fmt.Errorf("jira API error (HTTP %d): %s", resp.StatusCode, string(respBody))
 	}
 
