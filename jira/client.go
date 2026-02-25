@@ -160,6 +160,54 @@ func (c *Client) AuthMode() string {
 	return string(c.mode)
 }
 
+// PermissionGrant describes whether a specific Jira permission is granted.
+type PermissionGrant struct {
+	Key            string `json:"key"`
+	HavePermission bool   `json:"havePermission"`
+}
+
+// GetMyPermissions queries the Jira REST API /mypermissions endpoint and returns
+// which of the requested permission keys the authenticated user actually has.
+func (c *Client) GetMyPermissions(keys []string) (map[string]bool, error) {
+	qs := url.Values{"permissions": {strings.Join(keys, ",")}}
+	endpoint := fmt.Sprintf("%s/rest/api/3/mypermissions?%s", c.baseURL, qs.Encode())
+
+	req, err := http.NewRequest("GET", endpoint, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build mypermissions request: %w", err)
+	}
+	req.Header.Set("Accept", "application/json")
+	if err := c.authRequest(req); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("mypermissions request failed: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("mypermissions returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Permissions map[string]struct {
+			HavePermission bool `json:"havePermission"`
+		} `json:"permissions"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode mypermissions: %w", err)
+	}
+
+	grants := make(map[string]bool, len(result.Permissions))
+	for k, p := range result.Permissions {
+		grants[k] = p.HavePermission
+	}
+	return grants, nil
+}
+
 // refreshToken fetches a new OAuth access token using the client credentials grant.
 func (c *Client) refreshToken() error {
 	payload := url.Values{

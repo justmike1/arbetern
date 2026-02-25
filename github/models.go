@@ -186,3 +186,54 @@ func NewChatMessage(role, content string) ChatMessage {
 func NewToolResultMessage(toolCallID, content string) ChatMessage {
 	return ChatMessage{Role: "tool", Content: content, ToolCallID: toolCallID}
 }
+
+// AzureModel describes a model returned by the Azure OpenAI /models endpoint.
+type AzureModel struct {
+	ID      string `json:"id"`
+	Object  string `json:"object"`
+	Created int64  `json:"created_at,omitempty"`
+}
+
+// ListModels queries the Azure OpenAI /openai/models endpoint and returns
+// the model IDs accessible with the configured API key. Returns nil for
+// non-Azure clients.
+func (m *ModelsClient) ListModels(ctx context.Context) ([]string, error) {
+	if !m.useAzure() {
+		return nil, nil
+	}
+
+	apiURL := fmt.Sprintf("%s/openai/models?api-version=%s", m.azureEndpoint, azureAPIVersion)
+	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build models request: %w", err)
+	}
+	req.Header.Set("api-key", m.azureAPIKey)
+
+	resp, err := m.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("models request failed: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("models endpoint returned %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Data []AzureModel `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode models response: %w", err)
+	}
+
+	ids := make([]string, 0, len(result.Data))
+	for _, m := range result.Data {
+		ids = append(ids, m.ID)
+	}
+	return ids, nil
+}
+
+// Endpoint returns the Azure endpoint URL, or empty for non-Azure clients.
+func (m *ModelsClient) Endpoint() string {
+	return m.azureEndpoint
+}

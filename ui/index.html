@@ -375,11 +375,282 @@
     ::-webkit-scrollbar-thumb { background: var(--border-accent); border-radius: 3px; }
     ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
 
+    /* ── Integrations Grid ──────────────────────── */
+    .integrations-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 12px;
+      margin-bottom: 36px;
+    }
+
+    .integration-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      text-align: center;
+      position: relative;
+    }
+
+    .integration-card:hover {
+      background: var(--card-hover);
+      border-color: var(--border-accent);
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+    }
+
+    .integration-card.expanded {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 1px var(--accent);
+      background: var(--card-hover);
+      transform: none;
+    }
+
+    .integration-detail-panel {
+      background: var(--card);
+      border: 1px solid var(--accent);
+      border-radius: var(--radius);
+      padding: 20px;
+      margin-top: 12px;
+      margin-bottom: 36px;
+      animation: panelSlideIn 0.2s ease;
+    }
+
+    @keyframes panelSlideIn {
+      from { opacity: 0; transform: translateY(-8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .integration-detail-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .integration-active-model {
+      font-family: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+      font-size: 13px;
+      color: var(--accent);
+      margin-bottom: 14px;
+      padding: 6px 10px;
+      background: rgba(88,166,255,0.08);
+      border-radius: 6px;
+      width: fit-content;
+    }
+
+    .integration-detail-header .integration-logo {
+      width: 32px;
+      height: 32px;
+    }
+
+    .integration-detail-close {
+      margin-left: auto;
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      font-size: 18px;
+      cursor: pointer;
+      border-radius: 6px;
+      width: 28px;
+      height: 28px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s ease;
+    }
+
+    .integration-detail-close:hover {
+      color: var(--text);
+      background: var(--card-hover);
+    }
+
+    .integration-logo {
+      width: 40px;
+      height: 40px;
+      flex-shrink: 0;
+    }
+
+    .integration-logo svg {
+      width: 100%;
+      height: 100%;
+    }
+
+    .integration-name {
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .integration-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 11px;
+      padding: 3px 8px;
+      border-radius: 10px;
+    }
+
+    .integration-status.connected {
+      color: var(--green);
+      background: rgba(34, 197, 94, 0.1);
+      border: 1px solid rgba(34, 197, 94, 0.2);
+    }
+
+    .integration-status.disconnected {
+      color: #f87171;
+      background: rgba(248, 113, 113, 0.1);
+      border: 1px solid rgba(248, 113, 113, 0.2);
+    }
+
+    .integration-auth-mode {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .integration-header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      width: 100%;
+      cursor: pointer;
+    }
+
+    .integration-header-info {
+      flex: 1;
+    }
+
+    .integration-collapse-btn {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-muted);
+      width: 28px;
+      height: 28px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      transition: all 0.15s ease;
+      flex-shrink: 0;
+    }
+
+    .integration-collapse-btn:hover {
+      color: var(--text);
+      background: var(--card-hover);
+    }
+
+    .permissions-table {
+      width: 100%;
+      margin-top: 14px;
+      border-collapse: collapse;
+    }
+
+    .permissions-table th {
+      text-align: left;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .permissions-table td {
+      font-size: 13px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+
+    .permissions-table tr:last-child td {
+      border-bottom: none;
+    }
+
+    .permissions-table .scope-name {
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 12px;
+      color: var(--accent);
+      white-space: nowrap;
+    }
+
+    .permissions-table .scope-desc {
+      color: var(--text-muted);
+    }
+
+    .perm-badge {
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+
+    .perm-badge.required {
+      color: #f97316;
+      background: rgba(249, 115, 22, 0.1);
+    }
+
+    .perm-badge.optional {
+      color: var(--text-muted);
+      background: var(--card);
+    }
+
+    .perm-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      padding: 2px 8px;
+      border-radius: 4px;
+    }
+
+    .perm-status.granted {
+      color: #22c55e;
+      background: rgba(34, 197, 94, 0.1);
+    }
+
+    .perm-status.denied {
+      color: #ef4444;
+      background: rgba(239, 68, 68, 0.1);
+    }
+
+    .perm-status.unknown {
+      color: var(--text-muted);
+      background: var(--card);
+    }
+
+    .perm-status.warning {
+      color: #eab308;
+      background: rgba(234, 179, 8, 0.1);
+    }
+
+    .perm-badge.extra {
+      color: #eab308;
+      background: rgba(234, 179, 8, 0.1);
+    }
+
+    .perm-status-icon {
+      font-size: 12px;
+    }
+
     /* ── Responsive ─────────────────────────────── */
     @media (max-width: 640px) {
       header { padding: 16px; }
       main { padding: 20px 16px; }
       .agents-grid { grid-template-columns: 1fr; }
+      .integrations-grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -394,6 +665,14 @@
   </header>
 
   <main>
+    <div class="section-title">Integrations</div>
+    <div class="integrations-grid" id="integrations-grid">
+      <div class="empty-state" style="grid-column:1/-1;padding:30px;">
+        <p>Loading integrations...</p>
+      </div>
+    </div>
+    <div id="integration-detail"></div>
+
     <div class="section-title">Agents</div>
     <div class="agents-grid" id="agents-grid">
       <div class="empty-state">
@@ -576,6 +855,134 @@
       } catch(e) {}
     })();
 
+    // ── Integration SVG logos ──────────────────────
+    const INTEGRATION_LOGOS = {
+      slack: `<svg viewBox="0 0 128 128"><path d="M27.255 80.719c0 7.33-5.978 13.317-13.309 13.317C6.616 94.036.63 88.049.63 80.719s5.987-13.317 13.317-13.317h13.309zm6.709 0c0-7.33 5.987-13.317 13.317-13.317s13.317 5.986 13.317 13.317v33.335c0 7.33-5.986 13.317-13.317 13.317-7.33 0-13.317-5.987-13.317-13.317zm0 0" fill="#de1c59"/><path d="M47.281 27.255c-7.33 0-13.317-5.978-13.317-13.309C33.964 6.616 39.951.63 47.281.63s13.317 5.987 13.317 13.317v13.309zm0 6.709c7.33 0 13.317 5.987 13.317 13.317s-5.986 13.317-13.317 13.317H13.946C6.616 60.598.63 54.612.63 47.281c0-7.33 5.987-13.317 13.317-13.317zm0 0" fill="#35c5f0"/><path d="M100.745 47.281c0-7.33 5.978-13.317 13.309-13.317 7.33 0 13.317 5.987 13.317 13.317s-5.987 13.317-13.317 13.317h-13.309zm-6.709 0c0 7.33-5.987 13.317-13.317 13.317S67.402 54.612 67.402 47.281V13.946C67.402 6.616 73.388.63 80.719.63c7.33 0 13.317 5.987 13.317 13.317zm0 0" fill="#2eb67d"/><path d="M80.719 100.745c7.33 0 13.317 5.978 13.317 13.309 0 7.33-5.987 13.317-13.317 13.317s-13.317-5.987-13.317-13.317v-13.309zm0-6.709c-7.33 0-13.317-5.987-13.317-13.317s5.986-13.317 13.317-13.317h33.335c7.33 0 13.317 5.986 13.317 13.317 0 7.33-5.987 13.317-13.317 13.317zm0 0" fill="#ecb12f"/></svg>`,
+      github: `<svg viewBox="0 0 128 128"><g fill="#e4e4e7"><path fill-rule="evenodd" clip-rule="evenodd" d="M64 5.103c-33.347 0-60.388 27.035-60.388 60.388 0 26.682 17.303 49.317 41.297 57.303 3.017.56 4.125-1.31 4.125-2.905 0-1.44-.056-6.197-.082-11.243-16.8 3.653-20.345-7.125-20.345-7.125-2.747-6.98-6.705-8.836-6.705-8.836-5.48-3.748.413-3.67.413-3.67 6.063.425 9.257 6.223 9.257 6.223 5.386 9.23 14.127 6.562 17.573 5.02.542-3.903 2.107-6.568 3.834-8.076-13.413-1.525-27.514-6.704-27.514-29.843 0-6.593 2.36-11.98 6.223-16.21-.628-1.52-2.695-7.662.584-15.98 0 0 5.07-1.623 16.61 6.19C53.7 35 58.867 34.327 64 34.304c5.13.023 10.3.694 15.127 2.033 11.526-7.813 16.59-6.19 16.59-6.19 3.287 8.317 1.22 14.46.593 15.98 3.872 4.23 6.215 9.617 6.215 16.21 0 23.194-14.127 28.3-27.574 29.796 2.167 1.874 4.097 5.55 4.097 11.183 0 8.08-.07 14.583-.07 16.572 0 1.607 1.088 3.49 4.148 2.897 23.98-7.994 41.263-30.622 41.263-57.294C124.388 32.14 97.35 5.104 64 5.104z"/><path d="M26.484 91.806c-.133.3-.605.39-1.035.185-.44-.196-.685-.605-.543-.906.13-.31.603-.395 1.04-.188.44.197.69.61.537.91zm2.446 2.729c-.287.267-.85.143-1.232-.28-.396-.42-.47-.983-.177-1.254.298-.266.844-.14 1.24.28.394.426.472.984.17 1.255zm2.382 3.477c-.37.258-.976.017-1.35-.52-.37-.538-.37-1.183.01-1.44.373-.258.97-.025 1.35.507.368.545.368 1.19-.01 1.452zm3.261 3.361c-.33.365-1.036.267-1.552-.23-.528-.487-.674-1.18-.343-1.544.336-.366 1.045-.264 1.564.23.527.486.686 1.18.33 1.544zm4.5 1.951c-.147.473-.825.688-1.51.486-.683-.207-1.13-.76-.99-1.238.14-.477.823-.7 1.512-.485.683.206 1.13.756.988 1.237zm4.943.361c.017.498-.563.91-1.28.92-.723.017-1.308-.387-1.315-.877 0-.503.568-.91 1.29-.924.717-.013 1.306.387 1.306.88zm4.598-.782c.086.485-.413.984-1.126 1.117-.7.13-1.35-.172-1.44-.653-.086-.498.422-.997 1.122-1.126.714-.123 1.354.17 1.444.663zm0 0"/></g></svg>`,
+      jira: `<svg viewBox="0 0 128 128"><defs><linearGradient id="jira-a" x1="22.034" y1="9.773" x2="17.118" y2="14.842" gradientTransform="scale(4)" gradientUnits="userSpaceOnUse"><stop offset=".18" stop-color="#0052cc"/><stop offset="1" stop-color="#2684ff"/></linearGradient><linearGradient id="jira-b" x1="16.641" y1="15.63" x2="10.957" y2="21.09" gradientTransform="scale(4)" gradientUnits="userSpaceOnUse"><stop offset=".18" stop-color="#0052cc"/><stop offset="1" stop-color="#2684ff"/></linearGradient></defs><path d="M122.146 62.19L68.17 8.214 64 4.07 21.32 46.746 4.07 63.996l17.25 17.25L64 123.93l42.07-42.066.61-.61zm-58.15-16.31L80.62 62.5H46.56zm0 36.74L46.56 65.5h34.06z" fill="#2684ff"/><path d="M64 45.88C63.46 28.17 49.68 13.79 32.07 12.5L2.17 42.4l18.56 18.56z" fill="url(#jira-a)"/><path d="M81.1 62.5L64 79.62c.52 17.83 14.47 32.3 32.19 33.46l29.64-29.64-18.56-18.56z" fill="url(#jira-b)"/></svg>`,
+      'azure-openai': `<svg viewBox="0 0 128 128"><path d="M64 8L8 36v56l56 28 56-28V36zm0 8.5L112 40v48L64 111.5 16 88V40z" fill="#0078d4"/><path d="M64 20L20 44v40l44 22 44-22V44zm0 7l36 18v32L64 95 28 77V45z" fill="#50e6ff"/><circle cx="64" cy="64" r="12" fill="#0078d4"/></svg>`,
+    };
+
+    const INTEGRATION_COLORS = {
+      slack: '#4A154B',
+      github: '#24292e',
+      jira: '#0052CC',
+      'azure-openai': '#0078d4',
+    };
+
+    let integrationsData = [];
+    let expandedIntegration = null;
+
+    function renderIntegrations(integrations) {
+      const grid = document.getElementById('integrations-grid');
+      const detailPanel = document.getElementById('integration-detail');
+      if (integrations.length === 0) {
+        grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1;padding:30px;"><p>No integrations found.</p></div>`;
+        detailPanel.innerHTML = '';
+        return;
+      }
+
+      // Always render all cards as compact in the grid.
+      grid.innerHTML = integrations.map(ig => {
+        const logo = INTEGRATION_LOGOS[ig.id] || '';
+        const statusClass = ig.configured ? 'connected' : 'disconnected';
+        const statusLabel = ig.configured ? 'Connected' : 'Not configured';
+        const statusDot = ig.configured ? '●' : '○';
+        const selectedClass = expandedIntegration === ig.id ? ' expanded' : '';
+
+        return `
+          <div class="integration-card${selectedClass}" data-id="${ig.id}" onclick="toggleIntegration('${ig.id}')">
+            <div class="integration-logo">${logo}</div>
+            <div class="integration-name">${escapeHtml(ig.name)}</div>
+            <span class="integration-status ${statusClass}">${statusDot} ${statusLabel}</span>
+            ${ig.auth_mode ? `<div class="integration-auth-mode">${escapeHtml(ig.auth_mode)}</div>` : ''}
+          </div>`;
+      }).join('');
+
+      // Render the detail panel below the grid for the selected integration.
+      if (!expandedIntegration) {
+        detailPanel.innerHTML = '';
+        return;
+      }
+      const ig = integrations.find(i => i.id === expandedIntegration);
+      if (!ig) { detailPanel.innerHTML = ''; return; }
+
+      const logo = INTEGRATION_LOGOS[ig.id] || '';
+      const statusClass = ig.configured ? 'connected' : 'disconnected';
+      const statusLabel = ig.configured ? 'Connected' : 'Not configured';
+      const statusDot = ig.configured ? '●' : '○';
+
+      detailPanel.innerHTML = `
+        <div class="integration-detail-panel">
+          <div class="integration-detail-header">
+            <div class="integration-logo">${logo}</div>
+            <div>
+              <div class="integration-name">${escapeHtml(ig.name)}</div>
+              <div style="display:flex;gap:8px;align-items:center;margin-top:4px;">
+                <span class="integration-status ${statusClass}">${statusDot} ${statusLabel}</span>
+                ${ig.auth_mode ? `<span class="integration-auth-mode">${escapeHtml(ig.auth_mode)}</span>` : ''}
+              </div>
+            </div>
+            <button class="integration-detail-close" onclick="toggleIntegration('${ig.id}')" title="Close">&times;</button>
+          </div>
+          ${ig.active_model ? `<div class="integration-active-model">Model: <strong>${escapeHtml(ig.active_model)}</strong></div>` : ''}
+          <table class="permissions-table">
+            <thead>
+              <tr>
+                <th>Scope / Permission</th>
+                <th>Description</th>
+                <th>Status</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              ${ig.permissions.map(p => {
+                let statusHtml;
+                if (p.extra) {
+                  statusHtml = '<span class="perm-status warning"><span class="perm-status-icon">⚠</span> Extra</span>';
+                } else if (p.granted === true) {
+                  statusHtml = '<span class="perm-status granted"><span class="perm-status-icon">✓</span> Granted</span>';
+                } else if (p.granted === false) {
+                  statusHtml = '<span class="perm-status denied"><span class="perm-status-icon">✗</span> Missing</span>';
+                } else {
+                  statusHtml = '<span class="perm-status unknown">—</span>';
+                }
+                const badgeClass = p.extra ? 'extra' : (p.required ? 'required' : 'optional');
+                const badgeLabel = p.extra ? 'Extra' : (p.required ? 'Required' : 'Optional');
+                return `
+                <tr>
+                  <td class="scope-name">${escapeHtml(p.scope)}</td>
+                  <td class="scope-desc">${p.description ? escapeHtml(p.description) : '<span style="color:var(--text-muted);font-style:italic">Not used by arbetern</span>'}</td>
+                  <td>${statusHtml}</td>
+                  <td><span class="perm-badge ${badgeClass}">${badgeLabel}</span></td>
+                </tr>`;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>`;
+    }
+
+    function toggleIntegration(id) {
+      expandedIntegration = expandedIntegration === id ? null : id;
+      renderIntegrations(integrationsData);
+    }
+
+    async function loadIntegrations() {
+      try {
+        const resp = await fetch('/api/integrations');
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        integrationsData = await resp.json();
+        renderIntegrations(integrationsData);
+      } catch (err) {
+        console.error('Failed to load integrations:', err);
+        document.getElementById('integrations-grid').innerHTML = `
+          <div class="empty-state" style="grid-column:1/-1;padding:30px;">
+            <p>Failed to load integrations.</p>
+          </div>`;
+      }
+    }
+
+    loadIntegrations();
     loadAgents();
   </script>
 </body>

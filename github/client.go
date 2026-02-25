@@ -33,6 +33,27 @@ func (c *Client) GetAuthenticatedUser(ctx context.Context) (string, error) {
 	return user.GetLogin(), nil
 }
 
+// GetGrantedScopes queries the GitHub API and returns the OAuth scopes
+// the configured token actually has (read from the X-OAuth-Scopes header).
+func (c *Client) GetGrantedScopes(ctx context.Context) ([]string, error) {
+	_, resp, err := c.api.Users.Get(ctx, "")
+	if err != nil {
+		return nil, fmt.Errorf("failed to query GitHub API: %w", err)
+	}
+	raw := resp.Header.Get("X-OAuth-Scopes")
+	if raw == "" {
+		return nil, nil
+	}
+	parts := strings.Split(raw, ",")
+	scopes := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if s := strings.TrimSpace(p); s != "" {
+			scopes = append(scopes, s)
+		}
+	}
+	return scopes, nil
+}
+
 func (c *Client) ResolveOwner(ctx context.Context) (string, error) {
 	user, _, err := c.api.Users.Get(ctx, "")
 	if err != nil {

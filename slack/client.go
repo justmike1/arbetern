@@ -5,16 +5,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strings"
 
 	"github.com/slack-go/slack"
 )
 
 type Client struct {
-	api *slack.Client
+	api   *slack.Client
+	token string
 }
 
 func NewClient(botToken string) *Client {
-	return &Client{api: slack.New(botToken)}
+	return &Client{api: slack.New(botToken), token: botToken}
 }
 
 func (c *Client) FetchChannelHistory(channelID string, limit int) ([]slack.Message, error) {
@@ -95,6 +98,30 @@ func (c *Client) GetTeamURL() (string, error) {
 		return "", fmt.Errorf("failed to call auth.test: %w", err)
 	}
 	return resp.URL, nil
+}
+
+// GetBotScopes calls auth.test via a raw HTTP request and reads the
+// x-oauth-scopes response header to determine the bot token's granted scopes.
+func (c *Client) GetBotScopes() ([]string, error) {
+	data := url.Values{"token": {c.token}}
+	resp, err := http.PostForm("https://slack.com/api/auth.test", data)
+	if err != nil {
+		return nil, fmt.Errorf("slack auth.test request failed: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	raw := resp.Header.Get("X-OAuth-Scopes")
+	if raw == "" {
+		return nil, nil
+	}
+	parts := strings.Split(raw, ",")
+	scopes := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if s := strings.TrimSpace(p); s != "" {
+			scopes = append(scopes, s)
+		}
+	}
+	return scopes, nil
 }
 
 type webhookPayload struct {
