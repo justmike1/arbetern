@@ -43,8 +43,8 @@ An orchestration platform for AI agents in the enterprise. Each agent lives in i
 | `JIRA_PROJECT` | no | Default Jira project key (e.g. `ENG`) |
 | `APP_URL` | no | Public app URL (used for Jira ticket stamps) |
 | `UI_ALLOWED_CIDRS` | no | Comma-separated CIDRs allowed to access the UI |
-| `PROMPTS_FILE` | no | Path to prompts YAML (default: per-agent `agents/<name>/prompts.yaml`) |
-| `AGENTS_DIR` | no | Path to agents directory (default: `agents`) |
+| `SLACK_APP_TOKEN` | no | Slack app-level token (`xapp-...`) for Socket Mode — enables thread follow-ups without slash commands (see [docs/SLACK_BOT.md](docs/SLACK_BOT.md#socket-mode-thread-follow-ups)) |
+| `THREAD_SESSION_TTL` | no | Duration a thread session stays active (default: `3m`). Go duration format, e.g. `5m`, `2m30s` |
 | `UI_HEADER` | no | Custom header text for the web UI (default: `arbetern`) |
 
 ### Run Locally

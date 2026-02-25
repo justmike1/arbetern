@@ -3,12 +3,14 @@ package config
 import (
 	"fmt"
 	"os"
+	"time"
 )
 
 const (
-	defaultPort       = "8080"
-	defaultModel      = "openai/gpt-4o"
-	defaultAzureModel = "gpt-4o"
+	defaultPort             = "8080"
+	defaultModel            = "openai/gpt-4o"
+	defaultAzureModel       = "gpt-4o"
+	defaultThreadSessionTTL = 3 * time.Minute
 )
 
 type Config struct {
@@ -27,6 +29,8 @@ type Config struct {
 	JiraClientID       string
 	JiraClientSecret   string
 	AppURL             string
+	SlackAppToken      string
+	ThreadSessionTTL   time.Duration
 }
 
 // UseAzure returns true when Azure OpenAI credentials are configured.
@@ -65,6 +69,7 @@ func Load() (*Config, error) {
 		JiraClientID:       os.Getenv("JIRA_CLIENT_ID"),
 		JiraClientSecret:   os.Getenv("JIRA_CLIENT_SECRET"),
 		AppURL:             os.Getenv("APP_URL"),
+		SlackAppToken:      os.Getenv("SLACK_APP_TOKEN"),
 	}
 
 	if cfg.SlackBotToken == "" {
@@ -88,6 +93,16 @@ func Load() (*Config, error) {
 	}
 	if cfg.Port == "" {
 		cfg.Port = defaultPort
+	}
+
+	if ttlStr := os.Getenv("THREAD_SESSION_TTL"); ttlStr != "" {
+		if d, err := time.ParseDuration(ttlStr); err == nil && d > 0 {
+			cfg.ThreadSessionTTL = d
+		} else {
+			return nil, fmt.Errorf("invalid THREAD_SESSION_TTL %q: must be a positive Go duration (e.g. 3m, 5m30s)", ttlStr)
+		}
+	} else {
+		cfg.ThreadSessionTTL = defaultThreadSessionTTL
 	}
 
 	return cfg, nil

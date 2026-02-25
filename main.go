@@ -50,6 +50,15 @@ var (
 
 func boolPtr(v bool) *bool { return &v }
 
+// routerKeys returns the agent IDs from the routers map (for logging).
+func routerKeys(m map[string]*commands.Router) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
 // hasScope checks if a scope exists in a granted scopes list.
 // For hierarchical scopes like "repo" covering "repo:status", does prefix matching.
 func hasScope(granted []string, scope string) bool {
@@ -82,11 +91,21 @@ func refreshIntegrations(
 		{Scope: "mpim:history", Description: "Read message history in group DMs", Required: false},
 		{Scope: "users:read", Description: "Read user profile information (name, email)", Required: true},
 		{Scope: "commands", Description: "Register and receive slash commands", Required: true},
+		// Event subscriptions (required for Socket Mode thread follow-ups).
+		{Scope: "message.channels", Description: "Event: receive messages in public channels (Socket Mode)", Required: true},
+		{Scope: "message.groups", Description: "Event: receive messages in private channels (Socket Mode)", Required: true},
 	}
 	if cfg.SlackBotToken != "" {
 		if scopes, err := slackClient.GetBotScopes(); err == nil && scopes != nil {
 			known := make(map[string]bool, len(slackPerms))
 			for i := range slackPerms {
+				// Event subscriptions (message.channels, message.groups) are not
+				// OAuth scopes — they can't be verified via the token. Leave
+				// Granted as nil (unknown) for those entries.
+				if strings.HasPrefix(slackPerms[i].Scope, "message.") {
+					known[slackPerms[i].Scope] = true
+					continue
+				}
 				slackPerms[i].Granted = boolPtr(hasScope(scopes, slackPerms[i].Scope))
 				known[slackPerms[i].Scope] = true
 			}
@@ -333,18 +352,65 @@ func main() {
 	// Start background integration permission refresher (runs once now, then every hour).
 	startIntegrationsRefresher(cfg, slackClient, ghClient, jiraClient, modelsClient)
 
+	// Thread session store — enables follow-up replies in threads without /commands.
+	sessions := commands.NewSessionStore(cfg.ThreadSessionTTL)
+	log.Printf("Thread session TTL: %s", cfg.ThreadSessionTTL)
+
+	// Map of agentID → Router so the events handler can dispatch thread replies.
+	routers := make(map[string]*commands.Router, len(agents))
+
 	for _, agent := range agents {
 		ap, err := prompts.LoadAgent(agent.ID)
 		if err != nil {
 			log.Fatalf("failed to load prompts for agent %s: %v", agent.ID, err)
 		}
 
-		router := commands.NewRouter(slackClient, ghClient, modelsClient, jiraClient, ap, agent.ID, cfg.AppURL)
+		router := commands.NewRouter(slackClient, ghClient, modelsClient, jiraClient, ap, agent.ID, cfg.AppURL, sessions)
+		routers[agent.ID] = router
 		handler := ovadslack.NewHandler(cfg.SlackSigningSecret, router.Handle)
 
 		webhookPath := fmt.Sprintf("/%s/webhook", agent.ID)
 		http.Handle(webhookPath, handler)
 		log.Printf("Registered agent %q at %s", agent.ID, webhookPath)
+	}
+
+	// Socket Mode — connects outbound to Slack for thread reply events.
+	// Requires SLACK_APP_TOKEN (xapp-...) with connections:write scope.
+	if cfg.SlackAppToken != "" {
+		botUserID, err := slackClient.GetBotUserID()
+		if err != nil {
+			log.Printf("Warning: could not get bot user ID (thread sessions may echo): %v", err)
+		} else {
+			log.Printf("Bot user ID: %s", botUserID)
+		}
+
+		socketListener := ovadslack.NewSocketListener(cfg.SlackAppToken, cfg.SlackBotToken, botUserID,
+			// Thread reply handler.
+			func(channelID, threadTS, userID, text string) {
+				sess := sessions.Lookup(channelID, threadTS)
+				if sess == nil {
+					return // not a tracked thread
+				}
+				log.Printf("[session] thread reply channel=%s thread=%s user=%s text=%q",
+					channelID, threadTS, userID, text)
+				sess.Router.HandleThreadReply(channelID, threadTS, userID, text)
+			},
+			// Slash command handler — routes /<agent> commands to the correct router.
+			func(command, channelID, userID, text, responseURL string) {
+				// command is e.g. "/seihin" — strip the leading slash to get the agent ID.
+				agentID := strings.TrimPrefix(command, "/")
+				router, ok := routers[agentID]
+				if !ok {
+					log.Printf("[socket-mode] unknown agent for command %q (known: %v)", command, routerKeys(routers))
+					return
+				}
+				router.Handle(channelID, userID, text, responseURL)
+			},
+		)
+		go socketListener.Start()
+		log.Printf("Socket Mode enabled — listening for thread replies")
+	} else {
+		log.Printf("Warning: SLACK_APP_TOKEN not set — thread session follow-ups disabled")
 	}
 
 	http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -396,6 +462,19 @@ func main() {
 		integrationsMu.RUnlock()
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(data)
+	})
+
+	// API: thread session stats (observability).
+	apiMux.HandleFunc("/api/sessions", func(w http.ResponseWriter, r *http.Request) {
+		active, opened, expired, explicit := sessions.Stats()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"active":        active,
+			"total_opened":  opened,
+			"total_expired": expired,
+			"total_closed":  explicit,
+			"session_ttl":   cfg.ThreadSessionTTL.String(),
+		})
 	})
 
 	http.Handle("/api/", ipWhitelist(uiCIDRs, apiMux))

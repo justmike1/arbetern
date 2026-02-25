@@ -100,6 +100,15 @@ func (c *Client) GetTeamURL() (string, error) {
 	return resp.URL, nil
 }
 
+// GetBotUserID returns the Slack user ID of the bot token.
+func (c *Client) GetBotUserID() (string, error) {
+	resp, err := c.api.AuthTest()
+	if err != nil {
+		return "", fmt.Errorf("failed to call auth.test: %w", err)
+	}
+	return resp.UserID, nil
+}
+
 // GetBotScopes calls auth.test via a raw HTTP request and reads the
 // x-oauth-scopes response header to determine the bot token's granted scopes.
 func (c *Client) GetBotScopes() ([]string, error) {

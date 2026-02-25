@@ -3,6 +3,7 @@ package commands
 import (
 	"fmt"
 	"log"
+	"math"
 	"strings"
 
 	"github.com/justmike1/ovad/github"
@@ -20,9 +21,10 @@ type Router struct {
 	prompts         PromptProvider
 	agentID         string
 	appURL          string
+	sessions        *SessionStore
 }
 
-func NewRouter(slackClient SlackClient, ghClient *github.Client, modelsClient *github.ModelsClient, jiraClient *jira.Client, pp PromptProvider, agentID, appURL string) *Router {
+func NewRouter(slackClient SlackClient, ghClient *github.Client, modelsClient *github.ModelsClient, jiraClient *jira.Client, pp PromptProvider, agentID, appURL string, sessions *SessionStore) *Router {
 	return &Router{
 		slackClient:     slackClient,
 		ghClient:        ghClient,
@@ -33,6 +35,7 @@ func NewRouter(slackClient SlackClient, ghClient *github.Client, modelsClient *g
 		prompts:         pp,
 		agentID:         agentID,
 		appURL:          appURL,
+		sessions:        sessions,
 	}
 }
 
@@ -53,6 +56,11 @@ func (r *Router) Handle(channelID, userID, text, responseURL string) {
 	}
 
 	_ = ovadslack.RespondToURL(responseURL, fmt.Sprintf("Processing request: _%s_", text), true)
+
+	// Register a thread session so follow-up replies are auto-handled.
+	if auditTS != "" && r.sessions != nil {
+		r.sessions.Open(channelID, auditTS, userID, r.agentID, r)
+	}
 
 	r.memory.AddUserMessage(channelID, userID, text)
 
@@ -81,6 +89,13 @@ func (r *Router) Handle(channelID, userID, text, responseURL string) {
 		log.Printf("[user=%s channel=%s] routed to: general handler", userID, channelID)
 		handler := &GeneralHandler{slackClient: r.slackClient, ghClient: r.ghClient, modelsClient: r.modelsClient, jiraClient: r.jiraClient, contextProvider: r.contextProvider, memory: r.memory, prompts: r.prompts, agentID: r.agentID, appURL: r.appURL}
 		handler.Execute(channelID, userID, text, responseURL, auditTS)
+	}
+
+	// Post a session footer so the user knows they can reply in the thread.
+	if auditTS != "" && r.sessions != nil {
+		ttlMinutes := int(math.Round(r.sessions.TTL().Minutes()))
+		footer := fmt.Sprintf("_:thread: Thread session active — reply here for %d min without a /command._", ttlMinutes)
+		_ = r.slackClient.PostThreadReply(channelID, auditTS, footer)
 	}
 }
 
@@ -120,5 +135,40 @@ func isDebugIntent(text string) bool {
 func (r *Router) replyError(responseURL, msg string) {
 	if err := ovadslack.RespondToURL(responseURL, msg, true); err != nil {
 		log.Printf("failed to send error to user: %v", err)
+	}
+}
+
+// HandleThreadReply processes a user message posted in an active session thread.
+// It routes through the same command logic as a slash command, replying in-thread.
+func (r *Router) HandleThreadReply(channelID, threadTS, userID, text string) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return
+	}
+
+	log.Printf("[agent=%s user=%s channel=%s thread=%s] thread follow-up: %s",
+		r.agentID, userID, channelID, threadTS, text)
+
+	r.memory.AddUserMessage(channelID, userID, text)
+
+	lower := strings.ToLower(text)
+
+	switch {
+	case isDebugIntent(lower):
+		log.Printf("[user=%s channel=%s thread=%s] thread routed to: debug", userID, channelID, threadTS)
+		handler := &DebugHandler{
+			slackClient:     r.slackClient,
+			ghClient:        r.ghClient,
+			modelsClient:    r.modelsClient,
+			contextProvider: r.contextProvider,
+			memory:          r.memory,
+			prompts:         r.prompts,
+		}
+		handler.Execute(channelID, userID, text, "", threadTS)
+
+	default:
+		log.Printf("[user=%s channel=%s thread=%s] thread routed to: general handler", userID, channelID, threadTS)
+		handler := &GeneralHandler{slackClient: r.slackClient, ghClient: r.ghClient, modelsClient: r.modelsClient, jiraClient: r.jiraClient, contextProvider: r.contextProvider, memory: r.memory, prompts: r.prompts, agentID: r.agentID, appURL: r.appURL}
+		handler.Execute(channelID, userID, text, "", threadTS)
 	}
 }

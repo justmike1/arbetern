@@ -29,6 +29,7 @@ env:
   GITHUB_MODEL: "openai/gpt-4o" # options: openai/gpt-4o, meta/llama-3.1-405b-instruct, etc.
   APP_URL: ""  # Public base URL of this app (e.g. "https://ai.dev.example.io"). Used for UI link in Jira stamps.
   # UI_ALLOWED_CIDRS: "10.0.0.0/8,203.0.113.10/32"  # Comma-separated CIDRs; empty = no restriction.
+  # THREAD_SESSION_TTL: "3m"  # How long a thread session stays active (Go duration: 3m, 5m30s, etc.)
 
 secretName: arbetern-secrets
 
@@ -37,7 +38,8 @@ secretName: arbetern-secrets
 #   kubectl create secret generic arbetern-secrets \
 #     --from-literal=slack-bot-token=xoxb-... \
 #     --from-literal=slack-signing-secret=... \
-#     --from-literal=github-token=ghp_...
+#     --from-literal=github-token=ghp_... \
+#     --from-literal=slack-app-token=xapp-...  # optional, for Socket Mode
 createSecret: false
 
 secretValues:
@@ -52,6 +54,8 @@ secretValues:
   jira-email: ""         # Atlassian account email
   jira-api-token: ""     # Jira API token
   jira-project: ""       # Default project key (e.g. "ENG")
+  # Slack Socket Mode (optional – enables thread follow-ups without slash commands)
+  slack-app-token: ""    # App-level token (xapp-...) with connections:write scope
 
 service:
   type: ClusterIP

@@ -112,6 +112,13 @@ spec:
                   name: {{ .Values.secretName }}
                   key: jira-project
             {{- end }}
+            {{- if index .Values.secretValues "slack-app-token" }}
+            - name: SLACK_APP_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secretName }}
+                  key: slack-app-token
+            {{- end }}
             - name: GOMEMLIMIT
               value: {{ .Values.goRuntime.goMemLimit | quote }}
             - name: GOGC
