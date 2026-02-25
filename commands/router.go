@@ -61,11 +61,8 @@ func (r *Router) Handle(channelID, userID, text, responseURL string) {
 	switch {
 	case isIntroIntent(lower):
 		log.Printf("[user=%s channel=%s] routed to: intro", userID, channelID)
-		if auditTS != "" {
-			_ = r.slackClient.PostThreadReply(channelID, auditTS, r.prompts.MustGet("intro"))
-		} else {
-			_ = ovadslack.RespondToURL(responseURL, r.prompts.MustGet("intro"), false)
-		}
+		// Intro replies go to the channel (not a thread) so the whole team can see them.
+		_, _ = r.slackClient.PostMessage(channelID, r.prompts.MustGet("intro"))
 		return
 
 	case isDebugIntent(lower):
