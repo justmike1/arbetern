@@ -44,6 +44,11 @@ type Client struct {
 	accessToken  string
 	tokenExpiry  time.Time
 	tokenMu      sync.RWMutex
+
+	// Cached custom field IDs (discovered lazily).
+	extraFieldsOnce sync.Once
+	teamFieldID     string // e.g. "customfield_10001"
+	sprintFieldID   string // e.g. "customfield_10020"
 }
 
 // NewClient creates a Jira API client using Basic Auth (email + API token).
@@ -879,16 +884,16 @@ func BestUserMatch(users []JiraUser, query string) (JiraUser, bool) {
 	return ranked[0], strings.Contains(dn, core) || strings.Contains(dn, q)
 }
 
-// teamFieldInfo stores discovered team field metadata.
-type teamFieldInfo struct {
+// TeamFieldInfo stores discovered team field metadata.
+type TeamFieldInfo struct {
 	ID      string // e.g. "customfield_10001"
-	JQLName string // e.g. "Team" or "cf[10001]"
+	JQLName string // e.g. "Team[Team]" or "cf[10001]"
 }
 
 // FindTeamFields discovers all "Team"-like custom fields from Jira field metadata.
 // Results are sorted so that the actual Jira Teams field (clause "Team[Team]") comes first,
 // followed by dropdown/select variants.
-func (c *Client) FindTeamFields() ([]teamFieldInfo, error) {
+func (c *Client) FindTeamFields() ([]TeamFieldInfo, error) {
 	reqURL := fmt.Sprintf("%s/rest/api/3/field", c.baseURL)
 	req, err := http.NewRequest(http.MethodGet, reqURL, nil)
 	if err != nil {
@@ -928,8 +933,8 @@ func (c *Client) FindTeamFields() ([]teamFieldInfo, error) {
 	}
 
 	// Collect all team-like fields, partition by priority.
-	var preferred []teamFieldInfo // fields with [Team] clause (actual Jira Teams)
-	var fallback []teamFieldInfo  // other team-named fields (dropdown, select, etc.)
+	var preferred []TeamFieldInfo // fields with [Team] clause (actual Jira Teams)
+	var fallback []TeamFieldInfo  // other team-named fields (dropdown, select, etc.)
 
 	for _, f := range fields {
 		if f.Schema == nil {
@@ -942,7 +947,7 @@ func (c *Client) FindTeamFields() ([]teamFieldInfo, error) {
 			if len(f.ClauseNames) > 0 {
 				jqlName = f.ClauseNames[0]
 			}
-			info := teamFieldInfo{ID: f.ID, JQLName: jqlName}
+			info := TeamFieldInfo{ID: f.ID, JQLName: jqlName}
 
 			// Check if any clause name contains "[Team]" — that's the real Teams integration field.
 			isTeamsField := false
@@ -967,6 +972,127 @@ func (c *Client) FindTeamFields() ([]teamFieldInfo, error) {
 		return nil, fmt.Errorf("no Team custom field found")
 	}
 	return result, nil
+}
+
+// discoverExtraFields lazily discovers custom field IDs for Team and Sprint.
+// Called once; results are cached on the Client.
+func (c *Client) discoverExtraFields() {
+	c.extraFieldsOnce.Do(func() {
+		reqURL := fmt.Sprintf("%s/rest/api/3/field", c.baseURL)
+		req, err := http.NewRequest(http.MethodGet, reqURL, nil)
+		if err != nil {
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+		if err := c.authRequest(req); err != nil {
+			return
+		}
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return
+		}
+		defer func() { _ = resp.Body.Close() }()
+		body, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return
+		}
+
+		var fields []struct {
+			ID          string   `json:"id"`
+			Name        string   `json:"name"`
+			ClauseNames []string `json:"clauseNames"`
+			Schema      *struct {
+				Type   string `json:"type"`
+				Custom string `json:"custom"`
+			} `json:"schema"`
+		}
+		if err := json.Unmarshal(body, &fields); err != nil {
+			return
+		}
+
+		for _, f := range fields {
+			nameL := strings.ToLower(f.Name)
+			if f.Schema != nil {
+				customL := strings.ToLower(f.Schema.Custom)
+				// Team field
+				if c.teamFieldID == "" && (nameL == "team" || strings.Contains(customL, "teams")) {
+					c.teamFieldID = f.ID
+				}
+				// Sprint field
+				if c.sprintFieldID == "" && nameL == "sprint" {
+					c.sprintFieldID = f.ID
+				}
+			}
+			if c.teamFieldID != "" && c.sprintFieldID != "" {
+				break
+			}
+		}
+	})
+}
+
+// extraFieldIDs returns the custom field IDs to append to search queries.
+func (c *Client) extraFieldIDs() []string {
+	c.discoverExtraFields()
+	var ids []string
+	if c.teamFieldID != "" {
+		ids = append(ids, c.teamFieldID)
+	}
+	if c.sprintFieldID != "" {
+		ids = append(ids, c.sprintFieldID)
+	}
+	return ids
+}
+
+// extractSprintName extracts the active sprint name from a raw sprint field value.
+func extractSprintName(raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	// Sprint is usually an array of sprint objects; pick the last active one.
+	var sprints []struct {
+		Name  string `json:"name"`
+		State string `json:"state"`
+	}
+	if err := json.Unmarshal(raw, &sprints); err == nil && len(sprints) > 0 {
+		// Prefer active sprint, fall back to last one.
+		for i := len(sprints) - 1; i >= 0; i-- {
+			if strings.EqualFold(sprints[i].State, "active") {
+				return sprints[i].Name
+			}
+		}
+		return sprints[len(sprints)-1].Name
+	}
+	// Single sprint object.
+	var single struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(raw, &single); err == nil && single.Name != "" {
+		return single.Name
+	}
+	return ""
+}
+
+// extractCustomFields extracts Team and Sprint names from a raw JSON fields object
+// using the cached custom field IDs.
+func (c *Client) extractCustomFields(rawFields json.RawMessage) (team, sprint string) {
+	if len(rawFields) == 0 {
+		return "", ""
+	}
+	var allFields map[string]json.RawMessage
+	if err := json.Unmarshal(rawFields, &allFields); err != nil {
+		return "", ""
+	}
+	if c.teamFieldID != "" {
+		if v, ok := allFields[c.teamFieldID]; ok {
+			team = extractTeamName(v)
+		}
+	}
+	if c.sprintFieldID != "" {
+		if v, ok := allFields[c.sprintFieldID]; ok {
+			sprint = extractSprintName(v)
+		}
+	}
+	return team, sprint
 }
 
 // ResolveTeam attempts to find a team by name.
@@ -1024,7 +1150,7 @@ func (c *Client) SetTeamField(issueKey, fieldID, teamID string) error {
 
 // findTeamFromExistingIssues searches for issues in the default project that have the
 // Team field set, then filters client-side for a matching team name.
-func (c *Client) findTeamFromExistingIssues(field *teamFieldInfo, query string) (*teamSearchResult, error) {
+func (c *Client) findTeamFromExistingIssues(field *TeamFieldInfo, query string) (*teamSearchResult, error) {
 	// The Team custom field in Jira uses the clause name "Team[Team]" in JQL.
 	// We try: the discovered JQL clause name (e.g. "Team[Team]"), then cf[XXXX] as fallback.
 	jqlClause := fmt.Sprintf(`"%s"`, field.JQLName)
@@ -1373,8 +1499,12 @@ func (c *Client) SearchIssuesJQL(jql string, maxResults int) ([]IssueSummary, er
 	if maxResults <= 0 {
 		maxResults = 20
 	}
-	searchURL := fmt.Sprintf("%s/rest/api/3/search/jql?jql=%s&maxResults=%d&fields=summary,status,assignee,priority,issuetype,updated,description",
-		c.baseURL, url.QueryEscape(jql), maxResults)
+	fields := "summary,status,assignee,priority,issuetype,updated,description"
+	for _, id := range c.extraFieldIDs() {
+		fields += "," + id
+	}
+	searchURL := fmt.Sprintf("%s/rest/api/3/search/jql?jql=%s&maxResults=%d&fields=%s",
+		c.baseURL, url.QueryEscape(jql), maxResults, fields)
 
 	req, err := http.NewRequest(http.MethodGet, searchURL, nil)
 	if err != nil {
@@ -1403,16 +1533,8 @@ func (c *Client) SearchIssuesJQL(jql string, maxResults int) ([]IssueSummary, er
 	var result struct {
 		Total  int `json:"total"`
 		Issues []struct {
-			Key    string `json:"key"`
-			Fields struct {
-				Summary     string                        `json:"summary"`
-				Status      struct{ Name string }         `json:"status"`
-				Assignee    *struct{ DisplayName string } `json:"assignee"`
-				Priority    *struct{ Name string }        `json:"priority"`
-				IssueType   struct{ Name string }         `json:"issuetype"`
-				Updated     string                        `json:"updated"`
-				Description json.RawMessage               `json:"description"`
-			} `json:"fields"`
+			Key    string          `json:"key"`
+			Fields json.RawMessage `json:"fields"`
 		} `json:"issues"`
 	}
 	if err := json.Unmarshal(respBody, &result); err != nil {
@@ -1421,25 +1543,42 @@ func (c *Client) SearchIssuesJQL(jql string, maxResults int) ([]IssueSummary, er
 
 	issues := make([]IssueSummary, 0, len(result.Issues))
 	for _, i := range result.Issues {
+		var fields struct {
+			Summary     string                        `json:"summary"`
+			Status      struct{ Name string }         `json:"status"`
+			Assignee    *struct{ DisplayName string } `json:"assignee"`
+			Priority    *struct{ Name string }        `json:"priority"`
+			IssueType   struct{ Name string }         `json:"issuetype"`
+			Updated     string                        `json:"updated"`
+			Description json.RawMessage               `json:"description"`
+		}
+		_ = json.Unmarshal(i.Fields, &fields)
+
 		assignee := ""
-		if i.Fields.Assignee != nil {
-			assignee = i.Fields.Assignee.DisplayName
+		if fields.Assignee != nil {
+			assignee = fields.Assignee.DisplayName
 		}
 		priority := ""
-		if i.Fields.Priority != nil {
-			priority = i.Fields.Priority.Name
+		if fields.Priority != nil {
+			priority = fields.Priority.Name
 		}
-		desc := adfToPlainText(i.Fields.Description)
+		desc := adfToPlainText(fields.Description)
+
+		// Extract custom fields (Team, Sprint) from raw JSON.
+		team, sprint := c.extractCustomFields(i.Fields)
+
 		issues = append(issues, IssueSummary{
 			Key:         i.Key,
-			Summary:     i.Fields.Summary,
-			Status:      i.Fields.Status.Name,
+			Summary:     fields.Summary,
+			Status:      fields.Status.Name,
 			Assignee:    assignee,
 			Priority:    priority,
-			IssueType:   i.Fields.IssueType.Name,
-			Updated:     i.Fields.Updated,
+			IssueType:   fields.IssueType.Name,
+			Updated:     fields.Updated,
 			Description: desc,
 			Browse:      fmt.Sprintf("%s/browse/%s", c.siteURL, i.Key),
+			Team:        team,
+			Sprint:      sprint,
 		})
 	}
 	return issues, nil
@@ -1447,8 +1586,12 @@ func (c *Client) SearchIssuesJQL(jql string, maxResults int) ([]IssueSummary, er
 
 // GetIssue fetches a single Jira issue by key with full details.
 func (c *Client) GetIssue(issueKey string) (*IssueSummary, error) {
-	reqURL := fmt.Sprintf("%s/rest/api/3/issue/%s?fields=summary,status,assignee,priority,issuetype,updated,description,labels,reporter",
-		c.baseURL, issueKey)
+	fieldList := "summary,status,assignee,priority,issuetype,updated,description,labels,reporter"
+	for _, id := range c.extraFieldIDs() {
+		fieldList += "," + id
+	}
+	reqURL := fmt.Sprintf("%s/rest/api/3/issue/%s?fields=%s",
+		c.baseURL, issueKey, fieldList)
 
 	req, err := http.NewRequest(http.MethodGet, reqURL, nil)
 	if err != nil {
@@ -1475,48 +1618,57 @@ func (c *Client) GetIssue(issueKey string) (*IssueSummary, error) {
 	}
 
 	var raw struct {
-		Key    string `json:"key"`
-		Fields struct {
-			Summary     string                        `json:"summary"`
-			Status      struct{ Name string }         `json:"status"`
-			Assignee    *struct{ DisplayName string } `json:"assignee"`
-			Reporter    *struct{ DisplayName string } `json:"reporter"`
-			Priority    *struct{ Name string }        `json:"priority"`
-			IssueType   struct{ Name string }         `json:"issuetype"`
-			Updated     string                        `json:"updated"`
-			Labels      []string                      `json:"labels"`
-			Description json.RawMessage               `json:"description"`
-		} `json:"fields"`
+		Key    string          `json:"key"`
+		Fields json.RawMessage `json:"fields"`
 	}
 	if err := json.Unmarshal(respBody, &raw); err != nil {
 		return nil, fmt.Errorf("unmarshal response: %w", err)
 	}
 
+	var fields struct {
+		Summary     string                        `json:"summary"`
+		Status      struct{ Name string }         `json:"status"`
+		Assignee    *struct{ DisplayName string } `json:"assignee"`
+		Reporter    *struct{ DisplayName string } `json:"reporter"`
+		Priority    *struct{ Name string }        `json:"priority"`
+		IssueType   struct{ Name string }         `json:"issuetype"`
+		Updated     string                        `json:"updated"`
+		Labels      []string                      `json:"labels"`
+		Description json.RawMessage               `json:"description"`
+	}
+	_ = json.Unmarshal(raw.Fields, &fields)
+
 	assignee := ""
-	if raw.Fields.Assignee != nil {
-		assignee = raw.Fields.Assignee.DisplayName
+	if fields.Assignee != nil {
+		assignee = fields.Assignee.DisplayName
 	}
 	reporter := ""
-	if raw.Fields.Reporter != nil {
-		reporter = raw.Fields.Reporter.DisplayName
+	if fields.Reporter != nil {
+		reporter = fields.Reporter.DisplayName
 	}
 	priority := ""
-	if raw.Fields.Priority != nil {
-		priority = raw.Fields.Priority.Name
+	if fields.Priority != nil {
+		priority = fields.Priority.Name
 	}
-	desc := adfToPlainText(raw.Fields.Description)
+	desc := adfToPlainText(fields.Description)
+
+	// Extract custom fields (Team, Sprint) from raw JSON.
+	team, sprint := c.extractCustomFields(raw.Fields)
+
 	return &IssueSummary{
 		Key:         raw.Key,
-		Summary:     raw.Fields.Summary,
-		Status:      raw.Fields.Status.Name,
+		Summary:     fields.Summary,
+		Status:      fields.Status.Name,
 		Assignee:    assignee,
 		Reporter:    reporter,
 		Priority:    priority,
-		IssueType:   raw.Fields.IssueType.Name,
-		Updated:     raw.Fields.Updated,
-		Labels:      raw.Fields.Labels,
+		IssueType:   fields.IssueType.Name,
+		Updated:     fields.Updated,
+		Labels:      fields.Labels,
 		Description: desc,
 		Browse:      fmt.Sprintf("%s/browse/%s", c.siteURL, raw.Key),
+		Team:        team,
+		Sprint:      sprint,
 	}, nil
 }
 
@@ -1570,6 +1722,8 @@ type IssueSummary struct {
 	Labels      []string `json:"labels,omitempty"`
 	Description string   `json:"description,omitempty"`
 	Browse      string   `json:"browse"`
+	Team        string   `json:"team,omitempty"`
+	Sprint      string   `json:"sprint,omitempty"`
 }
 
 // adfToPlainText extracts plain text from an ADF document (json.RawMessage).

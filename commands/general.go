@@ -435,6 +435,19 @@ func (h *GeneralHandler) buildTools() []github.Tool {
 					"required":["name"]
 				}`),
 			},
+		}, github.Tool{
+			Type: "function",
+			Function: github.ToolFunction{
+				Name:        "resolve_jira_team",
+				Description: "Resolve a Jira team name to its UUID and JQL clause name. The Jira Teams integration field uses UUIDs, NOT display names, in JQL. You MUST call this tool first when searching for a team's tickets — it returns the JQL clause (e.g. 'Team[Team]') and team UUID. Then use the result in JQL like: '\"Team[Team]\" = \"<uuid>\"'. Example: resolve_jira_team({\"team_name\": \"DevOps\"}) → clause='Team[Team]', uuid='d6c2ac7c-...', then search with JQL '\"Team[Team]\" = \"d6c2ac7c-...\" AND status = \"In Progress\"'.",
+				Parameters: json.RawMessage(`{
+					"type":"object",
+					"properties":{
+						"team_name":{"type":"string","description":"The team name to resolve (e.g. 'DevOps', 'Platforms', 'Remediation')"}
+					},
+					"required":["team_name"]
+				}`),
+			},
 		})
 	}
 
@@ -925,7 +938,14 @@ func (h *GeneralHandler) executeTool(ctx context.Context, channelID, userID, aud
 		var sb strings.Builder
 		fmt.Fprintf(&sb, "Found %d issues:\n\n", len(issues))
 		for _, i := range issues {
-			fmt.Fprintf(&sb, "• *%s* — %s\n  Status: %s | Type: %s | Priority: %s\n  Assignee: %s | Updated: %s\n  URL: %s\n", i.Key, i.Summary, i.Status, i.IssueType, i.Priority, i.Assignee, i.Updated, i.Browse)
+			fmt.Fprintf(&sb, "• *%s* — %s\n  Status: %s | Type: %s | Priority: %s\n  Assignee: %s", i.Key, i.Summary, i.Status, i.IssueType, i.Priority, i.Assignee)
+			if i.Team != "" {
+				fmt.Fprintf(&sb, " | Team: %s", i.Team)
+			}
+			if i.Sprint != "" {
+				fmt.Fprintf(&sb, " | Sprint: %s", i.Sprint)
+			}
+			fmt.Fprintf(&sb, " | Updated: %s\n  URL: %s\n", i.Updated, i.Browse)
 			if i.Description != "" {
 				desc := i.Description
 				if len(desc) > 500 {
@@ -956,6 +976,12 @@ func (h *GeneralHandler) executeTool(ctx context.Context, channelID, userID, aud
 		fmt.Fprintf(&sb, "*%s* — %s\n", issue.Key, issue.Summary)
 		fmt.Fprintf(&sb, "Status: %s | Type: %s | Priority: %s\n", issue.Status, issue.IssueType, issue.Priority)
 		fmt.Fprintf(&sb, "Assignee: %s | Reporter: %s\n", issue.Assignee, issue.Reporter)
+		if issue.Team != "" {
+			fmt.Fprintf(&sb, "Team: %s\n", issue.Team)
+		}
+		if issue.Sprint != "" {
+			fmt.Fprintf(&sb, "Sprint: %s\n", issue.Sprint)
+		}
 		fmt.Fprintf(&sb, "Updated: %s\n", issue.Updated)
 		if len(issue.Labels) > 0 {
 			fmt.Fprintf(&sb, "Labels: %s\n", strings.Join(issue.Labels, ", "))
@@ -1019,6 +1045,30 @@ func (h *GeneralHandler) executeTool(ctx context.Context, channelID, userID, aud
 		}
 		return fmt.Sprintf("Slack User Info:\n  User ID: %s\n  Real Name: %s\n  Display Name: %s\n  Email: %s\n  Title: %s",
 			user.ID, user.RealName, user.Profile.DisplayName, user.Profile.Email, user.Profile.Title)
+
+	case "resolve_jira_team":
+		if h.jiraClient == nil {
+			return "Error: Jira integration is not configured."
+		}
+		var args struct {
+			TeamName string `json:"team_name"`
+		}
+		if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+			return fmt.Sprintf("Error parsing arguments: %v", err)
+		}
+		// First discover the JQL clause name for the Team field.
+		fields, err := h.jiraClient.FindTeamFields()
+		if err != nil {
+			return fmt.Sprintf("Error discovering Team field: %v", err)
+		}
+		jqlClause := fields[0].JQLName
+		// Then resolve the team name to its UUID.
+		_, teamID, displayName, err := h.jiraClient.ResolveTeam(args.TeamName)
+		if err != nil {
+			return fmt.Sprintf("Error resolving team %q: %v. Try a different team name spelling.", args.TeamName, err)
+		}
+		log.Printf("[user=%s channel=%s] resolved Jira team %q → %s (clause: %s)", userID, channelID, args.TeamName, teamID, jqlClause)
+		return fmt.Sprintf("Team resolved:\n  Display Name: %s\n  Team UUID: %s\n  JQL Clause: %s\n\nUse in JQL: \"%s\" = \"%s\"\nExample: \"%s\" = \"%s\" AND status = \"In Progress\" ORDER BY priority DESC", displayName, teamID, jqlClause, jqlClause, teamID, jqlClause, teamID)
 
 	case "resolve_jira_user":
 		if h.jiraClient == nil {
