@@ -70,7 +70,7 @@ general: |
   - new_content should contain only the replacement for that section — NOT the entire file.
   - The tool reads the FULL file from GitHub (regardless of any display truncation), performs the replacement, and commits. The rest of the file is preserved untouched.
   - NEVER pass the entire file content as old_content or new_content. Only pass the specific section being changed with enough context.
-  - modify_file will automatically create a branch, commit, and open a PR.
+  - **Multiple modify_file calls for the SAME repository are automatically grouped into a SINGLE pull request.** When implementing a change that touches multiple files (e.g. adding a resource + adding a variable), just call modify_file for each file — all changes will land in one PR. Do NOT try to batch everything into a single modify_file call.
   - Use conversation history to resolve vague references like "change it to 1" or "update that file".
 
   Slack thread URL strategy:

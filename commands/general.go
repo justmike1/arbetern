@@ -26,12 +26,23 @@ type GeneralHandler struct {
 	appURL           string
 	currentChannelID string
 	currentAuditTS   string
+	// activeBranches tracks branches created during this Execute() run.
+	// Key: "owner/repo", Value: branch metadata. This ensures multiple
+	// modify_file calls for the same repo produce a single PR.
+	activeBranches map[string]*activeBranchInfo
+}
+
+type activeBranchInfo struct {
+	branchName string
+	baseBranch string
+	prURL      string
 }
 
 func (h *GeneralHandler) Execute(channelID, userID, text, responseURL, auditTS string) {
 	ctx := context.Background()
 	h.currentChannelID = channelID
 	h.currentAuditTS = auditTS
+	h.activeBranches = make(map[string]*activeBranchInfo)
 
 	tools := h.buildTools()
 
@@ -223,7 +234,7 @@ func (h *GeneralHandler) buildTools() []github.Tool {
 			Type: "function",
 			Function: github.ToolFunction{
 				Name:        "modify_file",
-				Description: "Modify a file in a GitHub repository using a safe find-and-replace approach. Provide the exact text to find (old_content) and the replacement text (new_content). The tool reads the FULL file from GitHub, performs the replacement, then creates a branch, commits, and opens a PR. IMPORTANT: old_content must be an exact substring of the current file — include enough surrounding lines (3-5) will ensure a unique match. Only the matched section is replaced; the rest of the file is preserved.",
+				Description: "Modify a file in a GitHub repository using a safe find-and-replace approach. Provide the exact text to find (old_content) and the replacement text (new_content). The tool reads the FULL file from GitHub, performs the replacement, then creates a branch, commits, and opens a PR. Multiple modify_file calls for the SAME repository are automatically grouped into a SINGLE pull request — so when implementing a change that touches several files, just call modify_file for each file and all changes will land in one PR. IMPORTANT: old_content must be an exact substring of the current file — include enough surrounding lines (3-5) will ensure a unique match. Only the matched section is replaced; the rest of the file is preserved.",
 				Parameters: json.RawMessage(`{
 					"type":"object",
 					"properties":{
@@ -638,7 +649,19 @@ func (h *GeneralHandler) executeTool(ctx context.Context, channelID, userID, aud
 				return fmt.Sprintf("Error getting default branch: %v", err)
 			}
 		}
-		fullContent, fileSHA, err := h.ghClient.GetFileContent(ctx, owner, args.Repo, args.Path, baseBranch)
+
+		// Reuse an existing branch for this repo if one was created earlier in this session.
+		repoKey := owner + "/" + args.Repo
+		active := h.activeBranches[repoKey]
+
+		// Determine which branch to read the file from.
+		// If we already have an active branch, read from it (it may contain prior commits).
+		readBranch := baseBranch
+		if active != nil {
+			readBranch = active.branchName
+		}
+
+		fullContent, fileSHA, err := h.ghClient.GetFileContent(ctx, owner, args.Repo, args.Path, readBranch)
 		if err != nil {
 			return fmt.Sprintf("Error reading current file: %v", err)
 		}
@@ -651,22 +674,39 @@ func (h *GeneralHandler) executeTool(ctx context.Context, channelID, userID, aud
 			return fmt.Sprintf("Error: old_content matches %d locations in the file. Include more surrounding context lines to make it unique.", occurrences)
 		}
 		updatedContent := strings.Replace(fullContent, args.OldContent, args.NewContent, 1)
-		branchName := github.GenerateBranchName("ovad")
-		if err := h.ghClient.CreateBranch(ctx, owner, args.Repo, baseBranch, branchName); err != nil {
-			return fmt.Sprintf("Error creating branch: %v", err)
+
+		if active == nil {
+			// First modification for this repo — create a new branch and PR.
+			branchName := github.GenerateBranchName(h.agentID)
+			if err := h.ghClient.CreateBranch(ctx, owner, args.Repo, baseBranch, branchName); err != nil {
+				return fmt.Sprintf("Error creating branch: %v", err)
+			}
+			commitMsg := fmt.Sprintf("%s: %s", h.agentID, args.Description)
+			if err := h.ghClient.UpdateFile(ctx, owner, args.Repo, args.Path, branchName, commitMsg, []byte(updatedContent), fileSHA); err != nil {
+				return fmt.Sprintf("Error committing file: %v", err)
+			}
+			prTitle := fmt.Sprintf("%s: %s", h.agentID, args.Description)
+			prBody := fmt.Sprintf("Automated change requested via Slack by <@%s>.\n\nChange: %s", userID, args.Description)
+			prURL, err := h.ghClient.CreatePullRequest(ctx, owner, args.Repo, baseBranch, branchName, prTitle, prBody)
+			if err != nil {
+				return fmt.Sprintf("Changes committed to branch %s but PR creation failed: %v", branchName, err)
+			}
+			h.activeBranches[repoKey] = &activeBranchInfo{
+				branchName: branchName,
+				baseBranch: baseBranch,
+				prURL:      prURL,
+			}
+			log.Printf("[user=%s channel=%s] PR created via modify_file: %s", userID, channelID, prURL)
+			return fmt.Sprintf("Pull request created: %s", prURL)
 		}
-		commitMsg := fmt.Sprintf("ovad: %s", args.Description)
-		if err := h.ghClient.UpdateFile(ctx, owner, args.Repo, args.Path, branchName, commitMsg, []byte(updatedContent), fileSHA); err != nil {
-			return fmt.Sprintf("Error committing file: %v", err)
+
+		// Subsequent modification — commit to the existing branch.
+		commitMsg := fmt.Sprintf("%s: %s", h.agentID, args.Description)
+		if err := h.ghClient.UpdateFile(ctx, owner, args.Repo, args.Path, active.branchName, commitMsg, []byte(updatedContent), fileSHA); err != nil {
+			return fmt.Sprintf("Error committing file to existing branch: %v", err)
 		}
-		prTitle := fmt.Sprintf("ovad: %s", args.Description)
-		prBody := fmt.Sprintf("Automated change requested via Slack by <@%s>.\n\nChange: %s", userID, args.Description)
-		prURL, err := h.ghClient.CreatePullRequest(ctx, owner, args.Repo, baseBranch, branchName, prTitle, prBody)
-		if err != nil {
-			return fmt.Sprintf("Changes committed to branch %s but PR creation failed: %v", branchName, err)
-		}
-		log.Printf("[user=%s channel=%s] PR created via modify_file: %s", userID, channelID, prURL)
-		return fmt.Sprintf("Pull request created: %s", prURL)
+		log.Printf("[user=%s channel=%s] additional commit to branch %s for PR: %s", userID, channelID, active.branchName, active.prURL)
+		return fmt.Sprintf("Changes committed to existing PR: %s", active.prURL)
 
 	case "get_pull_request":
 		var args struct {
