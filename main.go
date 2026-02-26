@@ -61,15 +61,36 @@ func routerKeys(m map[string]*commands.Router) []string {
 
 // hasScope checks if a scope exists in a granted scopes list.
 // For hierarchical scopes like "repo" covering "repo:status", does prefix matching.
+// Also handles classic PAT implicit grants (e.g. "repo" implies "actions" and "checks").
 func hasScope(granted []string, scope string) bool {
 	for _, g := range granted {
 		if g == scope {
 			return true
 		}
+		// Hierarchical: "repo" covers "repo:status", "read:org" covers "read:org:xxx".
 		if strings.HasPrefix(scope, g+":") || strings.HasPrefix(g, scope+":") {
 			return true
 		}
 	}
+
+	// Classic PAT implicit grants: "repo" includes actions and checks access.
+	// These scopes don't appear in X-OAuth-Scopes but are functionally granted.
+	repoImplied := map[string]bool{
+		"actions":       true,
+		"actions:read":  true,
+		"actions:write": true,
+		"checks":        true,
+		"checks:read":   true,
+		"checks:write":  true,
+	}
+	if repoImplied[scope] {
+		for _, g := range granted {
+			if g == "repo" {
+				return true
+			}
+		}
+	}
+
 	return false
 }
 
@@ -128,6 +149,7 @@ func refreshIntegrations(
 		{Scope: "read:user", Description: "Read authenticated user profile", Required: true},
 		{Scope: "read:org", Description: "Read organization membership and list repos", Required: true},
 		{Scope: "actions:read", Description: "Read workflow runs, jobs, and logs (CI/CD debugging)", Required: false},
+		{Scope: "actions:write", Description: "Re-run workflow jobs (rerun failed jobs, rerun all)", Required: false},
 		{Scope: "checks:read", Description: "Read check run annotations for detailed CI feedback", Required: false},
 	}
 	ghAuthMode := ""

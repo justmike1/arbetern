@@ -628,3 +628,21 @@ func FormatWorkflowRunSummary(s *WorkflowRunSummary) string {
 
 	return sb.String()
 }
+
+// RerunFailedJobs re-runs only the failed jobs (and their dependents) in a workflow run.
+func (c *Client) RerunFailedJobs(ctx context.Context, owner, repo string, runID int64) error {
+	_, err := c.api.Actions.RerunFailedJobsByID(ctx, owner, repo, runID)
+	if err != nil {
+		return fmt.Errorf("failed to rerun failed jobs for run %d: %w", runID, err)
+	}
+	return nil
+}
+
+// RerunWorkflow re-runs an entire workflow run (all jobs).
+func (c *Client) RerunWorkflow(ctx context.Context, owner, repo string, runID int64) error {
+	_, err := c.api.Actions.RerunWorkflowByID(ctx, owner, repo, runID)
+	if err != nil {
+		return fmt.Errorf("failed to rerun workflow run %d: %w", runID, err)
+	}
+	return nil
+}

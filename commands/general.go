@@ -317,6 +317,34 @@ func (h *GeneralHandler) buildTools() []github.Tool {
 		{
 			Type: "function",
 			Function: github.ToolFunction{
+				Name:        "rerun_failed_jobs",
+				Description: "Re-run only the failed jobs (and their dependent jobs) in a GitHub Actions workflow run. This is equivalent to clicking 'Re-run failed jobs' in the GitHub Actions UI. Use this when the user asks to retry, rerun, or re-trigger a failed workflow. Only works on completed runs that have at least one failed job.",
+				Parameters: json.RawMessage(`{
+					"type":"object",
+					"properties":{
+						"url":{"type":"string","description":"Full GitHub Actions workflow run URL (e.g., 'https://github.com/org/repo/actions/runs/12345')."}
+					},
+					"required":["url"]
+				}`),
+			},
+		},
+		{
+			Type: "function",
+			Function: github.ToolFunction{
+				Name:        "rerun_workflow",
+				Description: "Re-run an entire GitHub Actions workflow run (all jobs, not just failed ones). This is equivalent to clicking 'Re-run all jobs' in the GitHub Actions UI. Use this when the user wants to completely re-trigger a workflow from scratch.",
+				Parameters: json.RawMessage(`{
+					"type":"object",
+					"properties":{
+						"url":{"type":"string","description":"Full GitHub Actions workflow run URL (e.g., 'https://github.com/org/repo/actions/runs/12345')."}
+					},
+					"required":["url"]
+				}`),
+			},
+		},
+		{
+			Type: "function",
+			Function: github.ToolFunction{
 				Name:        "reply_in_thread",
 				Description: "Post a message as a threaded reply to a specific Slack message. Use this when the user asks you to reply inside someone's thread or respond to a particular message. You need the thread_ts of the target message from the channel context. IMPORTANT: Messages marked [BOT] are this bot's own messages — never reply to those. Always use the thread_ts of the HUMAN user's message (e.g. the person mentioned by name like 'Shahar', 'John', etc.).",
 				Parameters: json.RawMessage(`{
@@ -822,6 +850,42 @@ func (h *GeneralHandler) executeTool(ctx context.Context, channelID, userID, aud
 		result := github.FormatWorkflowRunSummary(summary)
 		log.Printf("[user=%s channel=%s] fetched workflow run %s/%s/%d (conclusion: %s)", userID, channelID, owner, repo, runID, summary.Conclusion)
 		return result
+
+	case "rerun_failed_jobs":
+		var args struct {
+			URL string `json:"url"`
+		}
+		if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+			return fmt.Sprintf("Error parsing arguments: %v", err)
+		}
+		owner, repo, runID, err := github.ParseWorkflowRunURL(args.URL)
+		if err != nil {
+			return fmt.Sprintf("Error parsing workflow run URL: %v", err)
+		}
+		log.Printf("[user=%s channel=%s] rerunning failed jobs for %s/%s/%d", userID, channelID, owner, repo, runID)
+		if err := h.ghClient.RerunFailedJobs(ctx, owner, repo, runID); err != nil {
+			return fmt.Sprintf("Error rerunning failed jobs: %v", err)
+		}
+		log.Printf("[user=%s channel=%s] successfully triggered rerun of failed jobs for %s/%s/%d", userID, channelID, owner, repo, runID)
+		return fmt.Sprintf("Successfully triggered re-run of failed jobs for workflow run %d in %s/%s. The run is now in progress: %s", runID, owner, repo, args.URL)
+
+	case "rerun_workflow":
+		var args struct {
+			URL string `json:"url"`
+		}
+		if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+			return fmt.Sprintf("Error parsing arguments: %v", err)
+		}
+		owner, repo, runID, err := github.ParseWorkflowRunURL(args.URL)
+		if err != nil {
+			return fmt.Sprintf("Error parsing workflow run URL: %v", err)
+		}
+		log.Printf("[user=%s channel=%s] rerunning entire workflow %s/%s/%d", userID, channelID, owner, repo, runID)
+		if err := h.ghClient.RerunWorkflow(ctx, owner, repo, runID); err != nil {
+			return fmt.Sprintf("Error rerunning workflow: %v", err)
+		}
+		log.Printf("[user=%s channel=%s] successfully triggered full rerun of %s/%s/%d", userID, channelID, owner, repo, runID)
+		return fmt.Sprintf("Successfully triggered full re-run of workflow run %d in %s/%s. All jobs will run again: %s", runID, owner, repo, args.URL)
 
 	case "reply_in_thread":
 		var args struct {

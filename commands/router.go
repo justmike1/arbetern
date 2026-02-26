@@ -121,12 +121,36 @@ func isIntroIntent(text string) bool {
 }
 
 func isDebugIntent(text string) bool {
+	// If the user requests an action (rerun, modify, create PR, etc.), route to
+	// the general handler which has the full tool loop — the debug handler is
+	// analysis-only and cannot execute actions.
+	if requiresAction(text) {
+		return false
+	}
 	// A GitHub Actions workflow run URL is an implicit debug request.
 	if len(github.ExtractWorkflowRunURLs(text)) > 0 {
 		return true
 	}
 	debugKeywords := []string{"debug", "analyze", "investigate", "diagnose", "what happened", "explain the error", "look at the latest"}
 	for _, kw := range debugKeywords {
+		if strings.Contains(text, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+// requiresAction returns true when the user's message asks for a concrete action
+// that needs tool access (rerun workflows, modify files, create PRs, etc.).
+func requiresAction(text string) bool {
+	actionKeywords := []string{
+		"rerun", "re-run", "re run", "retry", "restart",
+		"create pr", "create a pr", "open pr", "open a pr",
+		"modify", "change", "update", "edit", "add", "remove",
+		"create ticket", "create a ticket", "create issue", "create a issue",
+		"create jira", "create a jira",
+	}
+	for _, kw := range actionKeywords {
 		if strings.Contains(text, kw) {
 			return true
 		}
