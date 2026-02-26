@@ -365,7 +365,7 @@ func main() {
 			log.Fatalf("failed to load prompts for agent %s: %v", agent.ID, err)
 		}
 
-		router := commands.NewRouter(slackClient, ghClient, modelsClient, jiraClient, ap, agent.ID, cfg.AppURL, sessions)
+		router := commands.NewRouter(slackClient, ghClient, modelsClient, jiraClient, ap, agent.ID, cfg.AppURL, sessions, cfg.MaxToolRounds)
 		routers[agent.ID] = router
 		handler := ovadslack.NewHandler(cfg.SlackSigningSecret, router.Handle)
 

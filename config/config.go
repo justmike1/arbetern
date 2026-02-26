@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -11,6 +12,7 @@ const (
 	defaultModel            = "openai/gpt-4o"
 	defaultAzureModel       = "gpt-4o"
 	defaultThreadSessionTTL = 3 * time.Minute
+	defaultMaxToolRounds    = 50
 )
 
 type Config struct {
@@ -31,6 +33,7 @@ type Config struct {
 	AppURL             string
 	SlackAppToken      string
 	ThreadSessionTTL   time.Duration
+	MaxToolRounds      int
 }
 
 // UseAzure returns true when Azure OpenAI credentials are configured.
@@ -93,6 +96,16 @@ func Load() (*Config, error) {
 	}
 	if cfg.Port == "" {
 		cfg.Port = defaultPort
+	}
+
+	if mtrStr := os.Getenv("MAX_TOOL_ROUNDS"); mtrStr != "" {
+		if n, err := strconv.Atoi(mtrStr); err == nil && n > 0 {
+			cfg.MaxToolRounds = n
+		} else {
+			return nil, fmt.Errorf("invalid MAX_TOOL_ROUNDS %q: must be a positive integer", mtrStr)
+		}
+	} else {
+		cfg.MaxToolRounds = defaultMaxToolRounds
 	}
 
 	if ttlStr := os.Getenv("THREAD_SESSION_TTL"); ttlStr != "" {

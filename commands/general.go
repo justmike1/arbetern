@@ -12,8 +12,6 @@ import (
 	ovadslack "github.com/justmike1/ovad/slack"
 )
 
-const maxToolRounds = 20
-
 type GeneralHandler struct {
 	slackClient      SlackClient
 	ghClient         *github.Client
@@ -24,6 +22,7 @@ type GeneralHandler struct {
 	prompts          PromptProvider
 	agentID          string
 	appURL           string
+	maxToolRounds    int
 	currentChannelID string
 	currentAuditTS   string
 	// activeBranches tracks branches created during this Execute() run.
@@ -75,7 +74,12 @@ func (h *GeneralHandler) Execute(channelID, userID, text, responseURL, auditTS s
 
 	repliedInThread := false
 
-	for i := 0; i < maxToolRounds; i++ {
+	rounds := h.maxToolRounds
+	if rounds <= 0 {
+		rounds = 50
+	}
+
+	for i := 0; i < rounds; i++ {
 		resp, err := h.modelsClient.CompleteWithTools(ctx, messages, tools)
 		if err != nil {
 			log.Printf("[user=%s channel=%s] LLM completion failed for general query: %v", userID, channelID, err)
