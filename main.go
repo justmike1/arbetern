@@ -17,8 +17,9 @@ import (
 	"github.com/justmike1/ovad/config"
 	"github.com/justmike1/ovad/github"
 	"github.com/justmike1/ovad/jira"
+	"github.com/justmike1/ovad/nvd"
 	"github.com/justmike1/ovad/prompts"
-	ovadslack "github.com/justmike1/ovad/slack"
+	"github.com/justmike1/ovad/slack"
 )
 
 //go:embed ui/*
@@ -98,7 +99,7 @@ func hasScope(granted []string, scope string) bool {
 // permissions and stores the result in the in-memory cache.
 func refreshIntegrations(
 	cfg *config.Config,
-	slackClient *ovadslack.Client,
+	slackClient *slack.Client,
 	ghClient *github.Client,
 	jiraClient *jira.Client,
 	modelsClient *github.ModelsClient,
@@ -315,6 +316,35 @@ func refreshIntegrations(
 		})
 	}
 
+	// --- NVD (National Vulnerability Database) ---
+	{
+		nvdConfigured := cfg.NVDAPIKey != ""
+		authMode := "Public (rate-limited)"
+		if nvdConfigured {
+			authMode = "API Key"
+		}
+		nvdPerms := []permission{
+			{Scope: "cves/2.0", Description: "Look up CVEs by ID (lookup_cve)", Required: true, Granted: boolPtr(true)},
+			{Scope: "cves/2.0?keywordSearch", Description: "Search CVEs by keyword (search_cve)", Required: true, Granted: boolPtr(true)},
+		}
+		if nvdConfigured {
+			nvdPerms = append(nvdPerms, permission{
+				Scope: "apiKey", Description: "API key grants ~50 requests per 30s rolling window", Required: false, Granted: boolPtr(true),
+			})
+		} else {
+			nvdPerms = append(nvdPerms, permission{
+				Scope: "apiKey", Description: "Without API key, limited to ~5 requests per 30s", Required: false, Granted: boolPtr(false),
+			})
+		}
+		result = append(result, integration{
+			ID:          "nvd",
+			Name:        "NVD",
+			Configured:  true,
+			AuthMode:    authMode,
+			Permissions: nvdPerms,
+		})
+	}
+
 	integrationsMu.Lock()
 	integrationsCache = result
 	integrationsMu.Unlock()
@@ -325,7 +355,7 @@ func refreshIntegrations(
 // then again every hour in a background goroutine.
 func startIntegrationsRefresher(
 	cfg *config.Config,
-	slackClient *ovadslack.Client,
+	slackClient *slack.Client,
 	ghClient *github.Client,
 	jiraClient *jira.Client,
 	modelsClient *github.ModelsClient,
@@ -348,7 +378,7 @@ func main() {
 		log.Fatalf("configuration error: %v", err)
 	}
 
-	slackClient := ovadslack.NewClient(cfg.SlackBotToken)
+	slackClient := slack.NewClient(cfg.SlackBotToken)
 
 	var ghClient *github.Client
 	if cfg.GitHubToken != "" {
@@ -401,6 +431,16 @@ func main() {
 		}
 	}
 
+	// NVD CVE API client — enables CVE lookup for the security researcher agent.
+	var nvdClient *nvd.Client
+	if cfg.NVDAPIKey != "" {
+		nvdClient = nvd.NewClient(cfg.NVDAPIKey)
+		log.Printf("NVD integration enabled (API key set)")
+	} else {
+		nvdClient = nvd.NewClient("")
+		log.Printf("NVD integration enabled (no API key — rate-limited)")
+	}
+
 	// Discover agents and register per-agent webhook routes (/<agent>/webhook).
 	agents, err := prompts.DiscoverAgents("")
 	if err != nil {
@@ -426,9 +466,9 @@ func main() {
 			log.Fatalf("failed to load prompts for agent %s: %v", agent.ID, err)
 		}
 
-		router := commands.NewRouter(slackClient, ghClient, modelsClient, codeModelsClient, jiraClient, ap, agent.ID, cfg.AppURL, sessions, cfg.MaxToolRounds)
+		router := commands.NewRouter(slackClient, ghClient, modelsClient, codeModelsClient, jiraClient, nvdClient, ap, agent.ID, cfg.AppURL, sessions, cfg.MaxToolRounds)
 		routers[agent.ID] = router
-		handler := ovadslack.NewHandler(cfg.SlackSigningSecret, router.Handle)
+		handler := slack.NewHandler(cfg.SlackSigningSecret, router.Handle)
 
 		webhookPath := fmt.Sprintf("/%s/webhook", agent.ID)
 		http.Handle(webhookPath, handler)
@@ -445,7 +485,7 @@ func main() {
 			log.Printf("Bot user ID: %s", botUserID)
 		}
 
-		socketListener := ovadslack.NewSocketListener(cfg.SlackAppToken, cfg.SlackBotToken, botUserID,
+		socketListener := slack.NewSocketListener(cfg.SlackAppToken, cfg.SlackBotToken, botUserID,
 			// Thread reply handler.
 			func(channelID, threadTS, userID, text string) {
 				sess := sessions.Lookup(channelID, threadTS)

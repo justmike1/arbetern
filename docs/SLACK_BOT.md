@@ -31,7 +31,7 @@
 1. In the left sidebar, go to **Slash Commands**
 2. Click **Create New Command**
 3. Fill in:
-   - **Command:** `/ovad` (or your agent's name, e.g. `/seihin`, `/agent-q`)
+   - **Command:** `/ovad` (or your agent's name, e.g. `/seihin`, `/agent-q`, `/goldsai`)
    - **Request URL:** `https://<your-server>/<agent-name>/webhook` (e.g. `https://ai.example.com/ovad/webhook`)
    - **Short Description:** `AI-powered assistant` (adjust per agent)
    - **Usage Hint:** `[your agent-specific usage hint]`

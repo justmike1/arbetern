@@ -29,6 +29,8 @@ secretValues:
   # Jira OAuth (alternative to email+token)
   # jira-client-id: "your-jira-client-id"
   # jira-client-secret: "your-jira-client-secret"
+  # NVD CVE API (optional — enables real-time CVE lookups for goldsai)
+  # nvd-api-key: "your-nvd-api-key"
 
 # ingress:
 #   enabled: true

@@ -58,6 +58,8 @@ secretValues:
   jira-project: ""       # Default project key (e.g. "ENG")
   # Slack Socket Mode (optional – enables thread follow-ups without slash commands)
   slack-app-token: ""    # App-level token (xapp-...) with connections:write scope
+  # NVD CVE API (optional — enables real-time CVE lookups for the security agent)
+  nvd-api-key: ""        # Get one at https://nvd.nist.gov/developers/request-an-api-key
 
 service:
   type: ClusterIP

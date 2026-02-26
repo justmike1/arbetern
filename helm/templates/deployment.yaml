@@ -119,6 +119,13 @@ spec:
                   name: {{ .Values.secretName }}
                   key: slack-app-token
             {{- end }}
+            {{- if index .Values.secretValues "nvd-api-key" }}
+            - name: NVD_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secretName }}
+                  key: nvd-api-key
+            {{- end }}
             - name: GOMEMLIMIT
               value: {{ .Values.goRuntime.goMemLimit | quote }}
             - name: GOGC

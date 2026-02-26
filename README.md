@@ -15,6 +15,7 @@ An orchestration platform for AI agents in the enterprise. Each agent lives in i
 |---|---|---|
 | **ovad** | DevOps & SRE Engineer | Debugs CI/CD failures, reads/modifies repo files, opens PRs — all from a Slack slash command |
 | **agent-q** | QA & Test Engineer | Analyzes test failures, reviews test coverage, suggests test cases, and triages flaky tests |
+| **goldsai** | Security Researcher | Assesses CVE impact on your codebase, audits dependencies, reviews code for vulnerabilities, and recommends remediation |
 | **seihin** (製品) | Sr. Technical Product Manager | Reviews and refines Jira tickets, rewrites descriptions with PM best practices, manages ticket quality at scale |
 
 ## Quick Start
@@ -34,7 +35,7 @@ An orchestration platform for AI agents in the enterprise. Each agent lives in i
 | `SLACK_SIGNING_SECRET` | yes | Slack app signing secret |
 | `GITHUB_TOKEN` | yes* | GitHub PAT (*or* use Azure OpenAI) |
 | `GENERAL_MODEL` | no | General/default model ID (default: `openai/gpt-4o`) |
-| `CODE_MODEL` | no | Model/deployment used for code-generation tasks — PRs, file modifications (default: same as `GENERAL_MODEL`) |
+| `CODE_MODEL` | no | Model/deployment used for code-related tasks — reading, reviewing, searching, and modifying code in GitHub (default: same as `GENERAL_MODEL`) |
 | `AZURE_OPEN_AI_ENDPOINT` | no | Azure OpenAI endpoint URL |
 | `AZURE_API_KEY` | no | Azure OpenAI API key |
 | `PORT` | no | HTTP port (default: `8080`) |
@@ -47,6 +48,7 @@ An orchestration platform for AI agents in the enterprise. Each agent lives in i
 | `SLACK_APP_TOKEN` | no | Slack app-level token (`xapp-...`) for Socket Mode — enables thread follow-ups without slash commands (see [docs/SLACK_BOT.md](docs/SLACK_BOT.md#socket-mode-thread-follow-ups)) |
 | `THREAD_SESSION_TTL` | no | Duration a thread session stays active (default: `3m`). Go duration format, e.g. `5m`, `2m30s` |
 | `MAX_TOOL_ROUNDS` | no | Max LLM tool-call rounds per request (default: `50`). Increase for complex multi-file tasks |
+| `NVD_API_KEY` | no | NVD (National Vulnerability Database) API key for CVE lookups. Get one free at <https://nvd.nist.gov/developers/request-an-api-key>. Without a key, requests are rate-limited (~5 req/30s vs ~50 req/30s with a key) |
 | `UI_HEADER` | no | Custom header text for the web UI (default: `arbetern`) |
 
 ### Run Locally
@@ -101,6 +103,8 @@ agents/              # agent definitions (one directory per agent)
     prompts.yaml     # DevOps & SRE agent prompts
   agent-q/
     prompts.yaml     # QA & Test Engineering agent prompts
+  goldsai/
+    prompts.yaml     # Security Research agent prompts
   seihin/
     prompts.yaml     # Sr. Technical Product Manager agent prompts
   prompts.yaml       # global prompts shared by all agents (e.g. security)
@@ -108,6 +112,7 @@ config/              # env var loading
 commands/            # intent routing, debug/general handlers
 github/              # GitHub API client + Models/Azure API client
 jira/                # Jira Cloud REST API client
+nvd/                 # NVD (National Vulnerability Database) CVE API client
 slack/               # Slack webhook handler + response helpers
 prompts/             # YAML prompt loader + agent discovery
 ui/                  # embedded web UI (agent manager)
@@ -126,8 +131,9 @@ Global prompts (e.g. `security`) are defined in `agents/prompts.yaml` and inheri
 | Integration | Documentation | Required By |
 |---|---|---|
 | Slack | [docs/SLACK_BOT.md](docs/SLACK_BOT.md) | All agents |
-| GitHub | [docs/GITHUB_PAT.md](docs/GITHUB_PAT.md) | ovad, agent-q |
-| Jira | [docs/JIRA.md](docs/JIRA.md) | seihin, ovad, agent-q |
+| GitHub | [docs/GITHUB_PAT.md](docs/GITHUB_PAT.md) | ovad, agent-q, goldsai |
+| Jira | [docs/JIRA.md](docs/JIRA.md) | seihin, ovad, agent-q, goldsai |
+| NVD | [NVD API](https://nvd.nist.gov/developers) | goldsai |
 
 ## Contributing
 

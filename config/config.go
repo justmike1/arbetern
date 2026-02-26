@@ -35,6 +35,7 @@ type Config struct {
 	SlackAppToken      string
 	ThreadSessionTTL   time.Duration
 	MaxToolRounds      int
+	NVDAPIKey          string
 }
 
 // UseAzure returns true when Azure OpenAI credentials are configured.
@@ -75,6 +76,7 @@ func Load() (*Config, error) {
 		JiraClientSecret:   os.Getenv("JIRA_CLIENT_SECRET"),
 		AppURL:             os.Getenv("APP_URL"),
 		SlackAppToken:      os.Getenv("SLACK_APP_TOKEN"),
+		NVDAPIKey:          os.Getenv("NVD_API_KEY"),
 	}
 
 	if cfg.SlackBotToken == "" {

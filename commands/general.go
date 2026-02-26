@@ -9,6 +9,7 @@ import (
 
 	"github.com/justmike1/ovad/github"
 	"github.com/justmike1/ovad/jira"
+	"github.com/justmike1/ovad/nvd"
 	ovadslack "github.com/justmike1/ovad/slack"
 )
 
@@ -18,6 +19,7 @@ type GeneralHandler struct {
 	modelsClient     *github.ModelsClient
 	codeModelsClient *github.ModelsClient
 	jiraClient       *jira.Client
+	nvdClient        *nvd.Client
 	contextProvider  *ContextProvider
 	memory           *ConversationMemory
 	prompts          PromptProvider
@@ -129,13 +131,18 @@ func (h *GeneralHandler) Execute(channelID, userID, text, responseURL, auditTS s
 			if tc.Function.Name == "reply_in_thread" && !strings.HasPrefix(result, "Error") {
 				repliedInThread = true
 			}
-			// Dynamically switch to the code model once code-modification
+			// Dynamically switch to the code model once code-related
 			// tools are invoked (covers cases where initial intent detection
 			// didn't trigger the code model).
-			if tc.Function.Name == "modify_file" && h.codeModelsClient != nil && activeClient != h.codeModelsClient {
+			codeTools := map[string]bool{
+				"modify_file": true, "get_file_content": true,
+				"search_code": true, "search_files": true,
+				"list_directory": true, "get_pull_request": true,
+			}
+			if codeTools[tc.Function.Name] && h.codeModelsClient != nil && activeClient != h.codeModelsClient {
 				activeClient = h.codeModelsClient
-				log.Printf("[user=%s channel=%s] switched to code model (%s) after modify_file call",
-					userID, channelID, h.codeModelsClient.Model())
+				log.Printf("[user=%s channel=%s] switched to code model (%s) after %s call",
+					userID, channelID, h.codeModelsClient.Model(), tc.Function.Name)
 			}
 		}
 	}
@@ -389,6 +396,38 @@ func (h *GeneralHandler) buildTools() []github.Tool {
 				}`),
 			},
 		},
+	}
+
+	// NVD CVE lookup tools are always available (NVD client is always created).
+	if h.nvdClient != nil {
+		tools = append(tools, github.Tool{
+			Type: "function",
+			Function: github.ToolFunction{
+				Name:        "lookup_cve",
+				Description: "Look up a specific CVE by its ID from the NVD (National Vulnerability Database). Returns full details: description, CVSS scores, affected products (CPEs), weaknesses (CWEs), and references. ALWAYS call this tool FIRST when the user mentions a CVE ID (e.g. CVE-2025-13836) to get authoritative data before searching code.",
+				Parameters: json.RawMessage(`{
+					"type":"object",
+					"properties":{
+						"cve_id":{"type":"string","description":"The CVE identifier (e.g. 'CVE-2025-13836')"}
+					},
+					"required":["cve_id"]
+				}`),
+			},
+		}, github.Tool{
+			Type: "function",
+			Function: github.ToolFunction{
+				Name:        "search_cve",
+				Description: "Search NVD for CVEs by keyword. Returns matching CVEs with their descriptions and CVSS scores. Useful for finding CVEs related to a specific library, product, or vulnerability type when you don't have the exact CVE ID.",
+				Parameters: json.RawMessage(`{
+					"type":"object",
+					"properties":{
+						"keyword":{"type":"string","description":"Search keyword(s) to match against CVE descriptions (e.g. 'log4j remote code execution', 'jackson-databind')"},
+						"results_per_page":{"type":"integer","description":"Number of results to return (default: 5, max: 20)"}
+					},
+					"required":["keyword"]
+				}`),
+			},
+		})
 	}
 
 	// Jira tools are only available when Jira is configured.
@@ -1278,6 +1317,57 @@ func (h *GeneralHandler) executeTool(ctx context.Context, channelID, userID, aud
 		log.Printf("[user=%s channel=%s] resolved Jira user %q -> %s (%s) via %s", userID, channelID, args.Name, users[0].DisplayName, users[0].AccountID, matchLabel)
 		return sb.String()
 
+	case "lookup_cve":
+		if h.nvdClient == nil {
+			return "Error: NVD integration is not configured."
+		}
+		var args struct {
+			CVEID string `json:"cve_id"`
+		}
+		if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+			return fmt.Sprintf("Error parsing arguments: %v", err)
+		}
+		args.CVEID = strings.TrimSpace(strings.ToUpper(args.CVEID))
+		if args.CVEID == "" {
+			return "Error: cve_id is required."
+		}
+		cve, err := h.nvdClient.LookupCVE(ctx, args.CVEID)
+		if err != nil {
+			return fmt.Sprintf("Error looking up %s: %v", args.CVEID, err)
+		}
+		log.Printf("[user=%s channel=%s] looked up CVE %s from NVD", userID, channelID, args.CVEID)
+		return nvd.FormatCVE(cve)
+
+	case "search_cve":
+		if h.nvdClient == nil {
+			return "Error: NVD integration is not configured."
+		}
+		var args struct {
+			Keyword        string `json:"keyword"`
+			ResultsPerPage int    `json:"results_per_page"`
+		}
+		if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+			return fmt.Sprintf("Error parsing arguments: %v", err)
+		}
+		if args.Keyword == "" {
+			return "Error: keyword is required."
+		}
+		items, total, err := h.nvdClient.SearchCVE(ctx, args.Keyword, args.ResultsPerPage)
+		if err != nil {
+			return fmt.Sprintf("Error searching NVD: %v", err)
+		}
+		if len(items) == 0 {
+			return fmt.Sprintf("No CVEs found matching '%s'.", args.Keyword)
+		}
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "Found %d CVEs matching '%s' (showing %d):\n\n", total, args.Keyword, len(items))
+		for _, item := range items {
+			sb.WriteString(nvd.FormatCVE(&item))
+			sb.WriteString("\n---\n")
+		}
+		log.Printf("[user=%s channel=%s] searched NVD for '%s' (%d results)", userID, channelID, args.Keyword, total)
+		return sb.String()
+
 	default:
 		return fmt.Sprintf("Unknown tool: %s", name)
 	}
@@ -1327,13 +1417,22 @@ func (h *GeneralHandler) replyDefault(channelID, responseURL, auditTS, text stri
 }
 
 // isCodeIntent returns true when the user's message suggests code modification,
-// file editing, or PR creation — tasks that benefit from the specialised CODE_MODEL.
+// code review, file reading, or PR creation — tasks that benefit from the specialised CODE_MODEL.
 func isCodeIntent(text string) bool {
 	codeKeywords := []string{
+		// Code modification
 		"modify", "change the code", "change code", "edit the file", "edit file",
 		"update the file", "update file", "fix the code", "fix code", "fix the bug",
 		"create pr", "create a pr", "open pr", "open a pr", "pull request",
 		"refactor", "implement", "add feature", "write code", "patch",
+		// Code review & reading
+		"review", "look at", "check the code", "check code", "read the code", "read code",
+		"show me the code", "show the code", "show code", "code review",
+		"analyze the code", "analyze code", "analyse the code", "analyse code",
+		"inspect", "examine", "audit", "vulnerability", "cve",
+		"affected", "exposed", "security", "dependency", "dependencies",
+		"what does", "how does", "explain the code", "explain code",
+		"search code", "search the code", "find in code", "look for",
 	}
 	for _, kw := range codeKeywords {
 		if strings.Contains(text, kw) {

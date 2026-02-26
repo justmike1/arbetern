@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 )
@@ -213,7 +214,35 @@ type responsesRequest struct {
 	Input        []responsesInputItem `json:"input"`
 	Instructions string               `json:"instructions,omitempty"`
 	Model        string               `json:"model"`
-	Tools        []Tool               `json:"tools,omitempty"`
+	Tools        []responsesTool      `json:"tools,omitempty"`
+}
+
+// responsesTool is the tool definition format for the Azure Responses API.
+// Unlike Chat Completions (which nests under "function"), the Responses API
+// expects name/description/parameters at the top level.
+type responsesTool struct {
+	Type        string          `json:"type"`
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	Parameters  json.RawMessage `json:"parameters,omitempty"`
+}
+
+// chatToolsToResponsesTools converts Chat Completions tool definitions to the
+// flat format expected by the Azure Responses API.
+func chatToolsToResponsesTools(tools []Tool) []responsesTool {
+	if len(tools) == 0 {
+		return nil
+	}
+	out := make([]responsesTool, len(tools))
+	for i, t := range tools {
+		out[i] = responsesTool{
+			Type:        t.Type,
+			Name:        t.Function.Name,
+			Description: t.Function.Description,
+			Parameters:  t.Function.Parameters,
+		}
+	}
+	return out
 }
 
 // responsesInputItem can represent a user/assistant message, a function_call,
@@ -286,7 +315,6 @@ func chatMessagesToResponsesInput(msgs []ChatMessage) (instructions string, item
 				for _, tc := range m.ToolCalls {
 					items = append(items, responsesInputItem{
 						Type:      "function_call",
-						ID:        tc.ID,
 						CallID:    tc.ID,
 						Name:      tc.Function.Name,
 						Arguments: tc.Function.Arguments,
@@ -372,12 +400,16 @@ func (m *ModelsClient) doResponses(ctx context.Context, messages []ChatMessage, 
 		Input:        items,
 		Instructions: instructions,
 		Model:        m.model,
-		Tools:        tools,
+		Tools:        chatToolsToResponsesTools(tools),
 	}
 
 	payload, err := json.Marshal(reqBody)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal responses request: %w", err)
+	}
+
+	if len(tools) > 0 {
+		log.Printf("[responses] sending %d tools, first tool: name=%q type=%q", len(reqBody.Tools), reqBody.Tools[0].Name, reqBody.Tools[0].Type)
 	}
 
 	apiURL := fmt.Sprintf("%s/openai/responses?api-version=%s",
