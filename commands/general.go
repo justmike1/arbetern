@@ -16,6 +16,7 @@ type GeneralHandler struct {
 	slackClient      SlackClient
 	ghClient         *github.Client
 	modelsClient     *github.ModelsClient
+	codeModelsClient *github.ModelsClient
 	jiraClient       *jira.Client
 	contextProvider  *ContextProvider
 	memory           *ConversationMemory
@@ -50,8 +51,17 @@ func (h *GeneralHandler) Execute(channelID, userID, text, responseURL, auditTS s
 		channelContext = cc
 	}
 
+	// Choose the active LLM client: use the code model when the request
+	// involves code changes (PRs, file modifications, etc.).
+	activeClient := h.modelsClient
+	if h.codeModelsClient != nil && isCodeIntent(strings.ToLower(text)) {
+		activeClient = h.codeModelsClient
+		log.Printf("[user=%s channel=%s] using code model (%s) for code-related request",
+			userID, channelID, h.codeModelsClient.Model())
+	}
+
 	systemMsg := h.systemPrompt()
-	systemMsg = strings.Replace(systemMsg, "{{MODEL}}", h.modelsClient.Model(), 1)
+	systemMsg = strings.Replace(systemMsg, "{{MODEL}}", activeClient.Model(), 1)
 	systemMsg = strings.Replace(systemMsg, "{{USER_ID}}", userID, 1)
 	history := h.memory.GetHistory(channelID, userID)
 	if history != "" {
@@ -80,7 +90,7 @@ func (h *GeneralHandler) Execute(channelID, userID, text, responseURL, auditTS s
 	}
 
 	for i := 0; i < rounds; i++ {
-		resp, err := h.modelsClient.CompleteWithTools(ctx, messages, tools)
+		resp, err := activeClient.CompleteWithTools(ctx, messages, tools)
 		if err != nil {
 			log.Printf("[user=%s channel=%s] LLM completion failed for general query: %v", userID, channelID, err)
 			h.replyDefault(channelID, responseURL, auditTS, fmt.Sprintf("Failed to process request: %v", err))
@@ -118,6 +128,14 @@ func (h *GeneralHandler) Execute(channelID, userID, text, responseURL, auditTS s
 			messages = append(messages, github.NewToolResultMessage(tc.ID, result))
 			if tc.Function.Name == "reply_in_thread" && !strings.HasPrefix(result, "Error") {
 				repliedInThread = true
+			}
+			// Dynamically switch to the code model once code-modification
+			// tools are invoked (covers cases where initial intent detection
+			// didn't trigger the code model).
+			if tc.Function.Name == "modify_file" && h.codeModelsClient != nil && activeClient != h.codeModelsClient {
+				activeClient = h.codeModelsClient
+				log.Printf("[user=%s channel=%s] switched to code model (%s) after modify_file call",
+					userID, channelID, h.codeModelsClient.Model())
 			}
 		}
 	}
@@ -1306,4 +1324,21 @@ func (h *GeneralHandler) replyDefault(channelID, responseURL, auditTS, text stri
 	if err := ovadslack.RespondToURL(responseURL, text, false); err != nil {
 		log.Printf("[channel=%s] failed to respond: %v", channelID, err)
 	}
+}
+
+// isCodeIntent returns true when the user's message suggests code modification,
+// file editing, or PR creation — tasks that benefit from the specialised CODE_MODEL.
+func isCodeIntent(text string) bool {
+	codeKeywords := []string{
+		"modify", "change the code", "change code", "edit the file", "edit file",
+		"update the file", "update file", "fix the code", "fix code", "fix the bug",
+		"create pr", "create a pr", "open pr", "open a pr", "pull request",
+		"refactor", "implement", "add feature", "write code", "patch",
+	}
+	for _, kw := range codeKeywords {
+		if strings.Contains(text, kw) {
+			return true
+		}
+	}
+	return false
 }

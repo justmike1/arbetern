@@ -35,12 +35,12 @@ type permission struct {
 }
 
 type integration struct {
-	ID          string       `json:"id"`
-	Name        string       `json:"name"`
-	Configured  bool         `json:"configured"`
-	AuthMode    string       `json:"auth_mode,omitempty"`
-	ActiveModel string       `json:"active_model,omitempty"`
-	Permissions []permission `json:"permissions"`
+	ID           string            `json:"id"`
+	Name         string            `json:"name"`
+	Configured   bool              `json:"configured"`
+	AuthMode     string            `json:"auth_mode,omitempty"`
+	ActiveModels map[string]string `json:"active_models,omitempty"`
+	Permissions  []permission      `json:"permissions"`
 }
 
 var (
@@ -102,6 +102,7 @@ func refreshIntegrations(
 	ghClient *github.Client,
 	jiraClient *jira.Client,
 	modelsClient *github.ModelsClient,
+	codeModelsClient *github.ModelsClient,
 ) {
 	// --- Slack ---
 	slackPerms := []permission{
@@ -269,33 +270,48 @@ func refreshIntegrations(
 			{Scope: "Cognitive Services OpenAI User", Description: "Azure RBAC role for chat completions inference", Required: true, Granted: boolPtr(true)},
 		}
 
-		activeModel := modelsClient.Model()
+		generalModel := modelsClient.Model()
+		codeModel := ""
+		if codeModelsClient != nil {
+			codeModel = codeModelsClient.Model()
+		}
+
+		// Build the active models map.
+		activeModels := map[string]string{"General": generalModel}
+		if codeModel != "" && codeModel != generalModel {
+			activeModels["Code"] = codeModel
+		}
 
 		// List all accessible models/deployments.
 		if models, err := modelsClient.ListModels(context.Background()); err == nil {
 			for _, m := range models {
-				isActive := m == activeModel
+				isGeneral := m == generalModel
+				isCode := m == codeModel && codeModel != generalModel
 				desc := "Available deployment"
-				if isActive {
-					desc = "Active deployment (currently in use)"
+				if isGeneral && isCode {
+					desc = "Active deployment (general + code)"
+				} else if isGeneral {
+					desc = "Active deployment (general)"
+				} else if isCode {
+					desc = "Active deployment (code)"
 				}
 				azurePerms = append(azurePerms, permission{
 					Scope:       m,
 					Description: desc,
-					Required:    isActive,
+					Required:    isGeneral || isCode,
 					Granted:     boolPtr(true),
-					Extra:       !isActive,
+					Extra:       !isGeneral && !isCode,
 				})
 			}
 		}
 
 		result = append(result, integration{
-			ID:          "azure-openai",
-			Name:        "Azure OpenAI",
-			Configured:  true,
-			AuthMode:    "API Key",
-			ActiveModel: activeModel,
-			Permissions: azurePerms,
+			ID:           "azure-openai",
+			Name:         "Azure OpenAI",
+			Configured:   true,
+			AuthMode:     "API Key",
+			ActiveModels: activeModels,
+			Permissions:  azurePerms,
 		})
 	}
 
@@ -313,14 +329,15 @@ func startIntegrationsRefresher(
 	ghClient *github.Client,
 	jiraClient *jira.Client,
 	modelsClient *github.ModelsClient,
+	codeModelsClient *github.ModelsClient,
 ) {
-	refreshIntegrations(cfg, slackClient, ghClient, jiraClient, modelsClient)
+	refreshIntegrations(cfg, slackClient, ghClient, jiraClient, modelsClient, codeModelsClient)
 
 	go func() {
 		ticker := time.NewTicker(1 * time.Hour)
 		defer ticker.Stop()
 		for range ticker.C {
-			refreshIntegrations(cfg, slackClient, ghClient, jiraClient, modelsClient)
+			refreshIntegrations(cfg, slackClient, ghClient, jiraClient, modelsClient, codeModelsClient)
 		}
 	}()
 }
@@ -339,15 +356,37 @@ func main() {
 	}
 
 	var modelsClient *github.ModelsClient
+	var codeModelsClient *github.ModelsClient
 	if cfg.UseAzure() {
-		modelsClient = github.NewAzureModelsClient(cfg.AzureEndpoint, cfg.AzureAPIKey, cfg.GitHubModel)
-		log.Printf("Using Azure OpenAI backend: %s (deployment: %s)", cfg.AzureEndpoint, cfg.GitHubModel)
+		modelsClient = github.NewAzureModelsClient(cfg.AzureEndpoint, cfg.AzureAPIKey, cfg.GeneralModel)
+		log.Printf("Using Azure OpenAI backend: %s (general: %s)", cfg.AzureEndpoint, cfg.GeneralModel)
+		codeModelsClient = github.NewAzureModelsClient(cfg.AzureEndpoint, cfg.AzureAPIKey, cfg.CodeModel)
+		if cfg.CodeModel != cfg.GeneralModel {
+			log.Printf("Code model (Azure): %s", cfg.CodeModel)
+		}
 	} else {
-		modelsClient = github.NewModelsClient(cfg.GitHubToken, cfg.GitHubModel)
-		log.Printf("Using GitHub Models backend (model: %s)", cfg.GitHubModel)
+		modelsClient = github.NewModelsClient(cfg.GitHubToken, cfg.GeneralModel)
+		log.Printf("Using GitHub Models backend (general: %s)", cfg.GeneralModel)
+		codeModelsClient = github.NewModelsClient(cfg.GitHubToken, cfg.CodeModel)
+		if cfg.CodeModel != cfg.GeneralModel {
+			log.Printf("Code model (GitHub): %s", cfg.CodeModel)
+		}
 	}
 
 	var jiraClient *jira.Client
+
+	// Validate configured models are accessible before proceeding.
+	if err := modelsClient.ValidateModel(context.Background()); err != nil {
+		log.Fatalf("GENERAL_MODEL validation failed: %v", err)
+	}
+	log.Printf("GENERAL_MODEL validated: %s", cfg.GeneralModel)
+	if cfg.CodeModel != cfg.GeneralModel {
+		if err := codeModelsClient.ValidateModel(context.Background()); err != nil {
+			log.Fatalf("CODE_MODEL validation failed: %v", err)
+		}
+		log.Printf("CODE_MODEL validated: %s", cfg.CodeModel)
+	}
+
 	if cfg.JiraConfigured() {
 		if cfg.JiraUseOAuth() {
 			var err error
@@ -372,7 +411,7 @@ func main() {
 	}
 
 	// Start background integration permission refresher (runs once now, then every hour).
-	startIntegrationsRefresher(cfg, slackClient, ghClient, jiraClient, modelsClient)
+	startIntegrationsRefresher(cfg, slackClient, ghClient, jiraClient, modelsClient, codeModelsClient)
 
 	// Thread session store — enables follow-up replies in threads without /commands.
 	sessions := commands.NewSessionStore(cfg.ThreadSessionTTL)
@@ -387,7 +426,7 @@ func main() {
 			log.Fatalf("failed to load prompts for agent %s: %v", agent.ID, err)
 		}
 
-		router := commands.NewRouter(slackClient, ghClient, modelsClient, jiraClient, ap, agent.ID, cfg.AppURL, sessions, cfg.MaxToolRounds)
+		router := commands.NewRouter(slackClient, ghClient, modelsClient, codeModelsClient, jiraClient, ap, agent.ID, cfg.AppURL, sessions, cfg.MaxToolRounds)
 		routers[agent.ID] = router
 		handler := ovadslack.NewHandler(cfg.SlackSigningSecret, router.Handle)
 

@@ -60,7 +60,7 @@ Set these environment variables on the server running arbetern:
 SLACK_BOT_TOKEN=xoxb-your-bot-token
 SLACK_SIGNING_SECRET=your-signing-secret
 GITHUB_TOKEN=your-github-pat
-GITHUB_MODEL=openai/gpt-4o
+GENERAL_MODEL=openai/gpt-4o
 PORT=8080
 # Optional: enable thread follow-ups via Socket Mode (see below)
 SLACK_APP_TOKEN=xapp-1-...

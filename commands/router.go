@@ -12,32 +12,34 @@ import (
 )
 
 type Router struct {
-	slackClient     SlackClient
-	ghClient        *github.Client
-	modelsClient    *github.ModelsClient
-	jiraClient      *jira.Client
-	contextProvider *ContextProvider
-	memory          *ConversationMemory
-	prompts         PromptProvider
-	agentID         string
-	appURL          string
-	sessions        *SessionStore
-	maxToolRounds   int
+	slackClient      SlackClient
+	ghClient         *github.Client
+	modelsClient     *github.ModelsClient
+	codeModelsClient *github.ModelsClient
+	jiraClient       *jira.Client
+	contextProvider  *ContextProvider
+	memory           *ConversationMemory
+	prompts          PromptProvider
+	agentID          string
+	appURL           string
+	sessions         *SessionStore
+	maxToolRounds    int
 }
 
-func NewRouter(slackClient SlackClient, ghClient *github.Client, modelsClient *github.ModelsClient, jiraClient *jira.Client, pp PromptProvider, agentID, appURL string, sessions *SessionStore, maxToolRounds int) *Router {
+func NewRouter(slackClient SlackClient, ghClient *github.Client, modelsClient *github.ModelsClient, codeModelsClient *github.ModelsClient, jiraClient *jira.Client, pp PromptProvider, agentID, appURL string, sessions *SessionStore, maxToolRounds int) *Router {
 	return &Router{
-		slackClient:     slackClient,
-		ghClient:        ghClient,
-		modelsClient:    modelsClient,
-		jiraClient:      jiraClient,
-		contextProvider: NewContextProvider(slackClient),
-		memory:          NewConversationMemory(),
-		prompts:         pp,
-		agentID:         agentID,
-		appURL:          appURL,
-		sessions:        sessions,
-		maxToolRounds:   maxToolRounds,
+		slackClient:      slackClient,
+		ghClient:         ghClient,
+		modelsClient:     modelsClient,
+		codeModelsClient: codeModelsClient,
+		jiraClient:       jiraClient,
+		contextProvider:  NewContextProvider(slackClient),
+		memory:           NewConversationMemory(),
+		prompts:          pp,
+		agentID:          agentID,
+		appURL:           appURL,
+		sessions:         sessions,
+		maxToolRounds:    maxToolRounds,
 	}
 }
 
@@ -89,7 +91,7 @@ func (r *Router) Handle(channelID, userID, text, responseURL string) {
 
 	default:
 		log.Printf("[user=%s channel=%s] routed to: general handler", userID, channelID)
-		handler := &GeneralHandler{slackClient: r.slackClient, ghClient: r.ghClient, modelsClient: r.modelsClient, jiraClient: r.jiraClient, contextProvider: r.contextProvider, memory: r.memory, prompts: r.prompts, agentID: r.agentID, appURL: r.appURL, maxToolRounds: r.maxToolRounds}
+		handler := &GeneralHandler{slackClient: r.slackClient, ghClient: r.ghClient, modelsClient: r.modelsClient, codeModelsClient: r.codeModelsClient, jiraClient: r.jiraClient, contextProvider: r.contextProvider, memory: r.memory, prompts: r.prompts, agentID: r.agentID, appURL: r.appURL, maxToolRounds: r.maxToolRounds}
 		handler.Execute(channelID, userID, text, responseURL, auditTS)
 	}
 
@@ -194,7 +196,7 @@ func (r *Router) HandleThreadReply(channelID, threadTS, userID, text string) {
 
 	default:
 		log.Printf("[user=%s channel=%s thread=%s] thread routed to: general handler", userID, channelID, threadTS)
-		handler := &GeneralHandler{slackClient: r.slackClient, ghClient: r.ghClient, modelsClient: r.modelsClient, jiraClient: r.jiraClient, contextProvider: r.contextProvider, memory: r.memory, prompts: r.prompts, agentID: r.agentID, appURL: r.appURL, maxToolRounds: r.maxToolRounds}
+		handler := &GeneralHandler{slackClient: r.slackClient, ghClient: r.ghClient, modelsClient: r.modelsClient, codeModelsClient: r.codeModelsClient, jiraClient: r.jiraClient, contextProvider: r.contextProvider, memory: r.memory, prompts: r.prompts, agentID: r.agentID, appURL: r.appURL, maxToolRounds: r.maxToolRounds}
 		handler.Execute(channelID, userID, text, "", threadTS)
 	}
 }

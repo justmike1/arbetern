@@ -432,13 +432,19 @@
       margin-bottom: 14px;
     }
 
+    .integration-active-models {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+
     .integration-active-model {
       display: flex;
       align-items: center;
       gap: 8px;
       font-size: 13px;
       color: var(--text);
-      margin-bottom: 14px;
       padding: 8px 12px;
       background: var(--card);
       border: 1px solid var(--border);
@@ -940,7 +946,7 @@
             </div>
             <button class="integration-detail-close" onclick="toggleIntegration('${ig.id}')" title="Close">&times;</button>
           </div>
-          ${ig.active_model ? `<div class="integration-active-model"><span class="model-label">Active Model</span><span class="model-value">${escapeHtml(ig.active_model)}</span></div>` : ''}
+          ${ig.active_models && Object.keys(ig.active_models).length ? `<div class="integration-active-models">${Object.entries(ig.active_models).map(([label, model]) => `<div class="integration-active-model"><span class="model-label">${escapeHtml(label)}</span><span class="model-value">${escapeHtml(model)}</span></div>`).join('')}</div>` : ''}
           <table class="permissions-table">
             <thead>
               <tr>

@@ -11,7 +11,7 @@ createSecret: true
 env:
   UI_HEADER: "arbetern"
   APP_URL: "https://your-app-url.example.com"
-  GITHUB_MODEL: "gpt-4o"
+  GENERAL_MODEL: "gpt-4o"
   # UI_ALLOWED_CIDRS: "0.0.0.0/0"
 
 secretValues:

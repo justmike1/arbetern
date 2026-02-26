@@ -26,7 +26,8 @@ containerPort: 8080
 
 env:
   PORT: "8080"
-  GITHUB_MODEL: "openai/gpt-4o" # options: openai/gpt-4o, meta/llama-3.1-405b-instruct, etc.
+  GENERAL_MODEL: "openai/gpt-4o" # options: openai/gpt-4o, meta/llama-3.1-405b-instruct, etc.
+  # CODE_MODEL: "openai/gpt-4o"  # Separate model for code-generation tasks (PRs, file edits). Defaults to GENERAL_MODEL.
   APP_URL: ""  # Public base URL of this app (e.g. "https://ai.dev.example.io"). Used for UI link in Jira stamps.
   # UI_ALLOWED_CIDRS: "10.0.0.0/8,203.0.113.10/32"  # Comma-separated CIDRs; empty = no restriction.
   # THREAD_SESSION_TTL: "3m"  # How long a thread session stays active (Go duration: 3m, 5m30s, etc.)

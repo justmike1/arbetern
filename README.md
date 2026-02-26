@@ -33,7 +33,8 @@ An orchestration platform for AI agents in the enterprise. Each agent lives in i
 | `SLACK_BOT_TOKEN` | yes | Slack bot OAuth token (`xoxb-...`) |
 | `SLACK_SIGNING_SECRET` | yes | Slack app signing secret |
 | `GITHUB_TOKEN` | yes* | GitHub PAT (*or* use Azure OpenAI) |
-| `GITHUB_MODEL` | no | Model ID (default: `openai/gpt-4o`) |
+| `GENERAL_MODEL` | no | General/default model ID (default: `openai/gpt-4o`) |
+| `CODE_MODEL` | no | Model/deployment used for code-generation tasks — PRs, file modifications (default: same as `GENERAL_MODEL`) |
 | `AZURE_OPEN_AI_ENDPOINT` | no | Azure OpenAI endpoint URL |
 | `AZURE_API_KEY` | no | Azure OpenAI API key |
 | `PORT` | no | HTTP port (default: `8080`) |

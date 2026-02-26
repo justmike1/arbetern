@@ -19,7 +19,8 @@ type Config struct {
 	SlackBotToken      string
 	SlackSigningSecret string
 	GitHubToken        string
-	GitHubModel        string
+	GeneralModel       string // Default model/deployment for general queries.
+	CodeModel          string // Separate model/deployment for code-generation tasks (PRs, modify_file).
 	AzureEndpoint      string
 	AzureAPIKey        string
 	Port               string
@@ -60,7 +61,8 @@ func Load() (*Config, error) {
 		SlackBotToken:      os.Getenv("SLACK_BOT_TOKEN"),
 		SlackSigningSecret: os.Getenv("SLACK_SIGNING_SECRET"),
 		GitHubToken:        os.Getenv("GITHUB_TOKEN"),
-		GitHubModel:        os.Getenv("GITHUB_MODEL"),
+		GeneralModel:       os.Getenv("GENERAL_MODEL"),
+		CodeModel:          os.Getenv("CODE_MODEL"),
 		AzureEndpoint:      os.Getenv("AZURE_OPEN_AI_ENDPOINT"),
 		AzureAPIKey:        os.Getenv("AZURE_API_KEY"),
 		Port:               os.Getenv("PORT"),
@@ -87,15 +89,20 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("GITHUB_TOKEN is required (or set AZURE_OPEN_AI_ENDPOINT and AZURE_API_KEY)")
 	}
 
-	if cfg.GitHubModel == "" {
+	if cfg.GeneralModel == "" {
 		if cfg.UseAzure() {
-			cfg.GitHubModel = defaultAzureModel
+			cfg.GeneralModel = defaultAzureModel
 		} else {
-			cfg.GitHubModel = defaultModel
+			cfg.GeneralModel = defaultModel
 		}
 	}
 	if cfg.Port == "" {
 		cfg.Port = defaultPort
+	}
+
+	// CODE_MODEL defaults to the general model when not explicitly set.
+	if cfg.CodeModel == "" {
+		cfg.CodeModel = cfg.GeneralModel
 	}
 
 	if mtrStr := os.Getenv("MAX_TOOL_ROUNDS"); mtrStr != "" {
